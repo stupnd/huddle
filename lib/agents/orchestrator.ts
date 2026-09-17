@@ -24,6 +24,25 @@ Choose ONE action:
 Never spawn an agent for a topic that already has an active agent. Max 2 active child agents (3 during a debate).
 Reply with JSON only: {"action": "none"}`;
 
+/**
+ * The model names roles freely ("Lodging Specialist"), but the emoji map and the
+ * duplicate-agent guard both key off a fixed set, so fold synonyms back onto it.
+ */
+const ROLE_SYNONYMS: [RegExp, string][] = [
+  [/stay|lodg|hotel|hostel|airbnb|accom/, "stays"],
+  [/flight|airfare|airline/, "flights"],
+  [/transport|transit|train|bus|getting around|rental car/, "transport"],
+  [/nightlife|bar|club|party/, "nightlife"],
+  [/food|eat|restaurant|dining|brunch|cafe/, "food"],
+  [/activit|thing to do|attraction|sightsee|itinerar/, "activities"],
+  [/weather|forecast/, "weather"],
+];
+
+function normalizeRole(raw: string) {
+  const r = raw.toLowerCase();
+  return ROLE_SYNONYMS.find(([re]) => re.test(r))?.[1] ?? r.trim();
+}
+
 export async function runOrchestrator(ctx: TripContext) {
   if (ctx.trip.activity_level === "paused") return { action: "none" } as Plan;
 
@@ -36,6 +55,8 @@ export async function runOrchestrator(ctx: TripContext) {
     },
     { action: "none" }
   );
+
+  if (plan.role) plan.role = normalizeRole(plan.role);
 
   const s = db();
   const taken = ctx.agents.map((a) => a.persona_name);

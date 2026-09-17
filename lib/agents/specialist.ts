@@ -2,7 +2,8 @@ import { db, type Agent } from "../supabase";
 import { ask, askJSON, MODELS } from "./claude";
 import { describe, loadContext } from "./context";
 
-const STYLE = `Style: you are texting in a friend group chat. Short, casual, lowercase is fine, 1 to 2 sentences, no bullet points, no em dashes.
+const STYLE = `Style: you are texting in a friend group chat. Short, casual, lowercase is fine, no bullet points, no em dashes.
+Never more than 3 sentences in a chat message. Detail belongs in the options you write to the dashboard, not in the text.
 Never reveal anyone's private budget number; say things like "a couple of you are budget conscious" instead.`;
 
 /** A newly spawned specialist researches its topic and queues an intro plus options. */

@@ -54,8 +54,14 @@ export function describe(ctx: TripContext, { includePrivate = false } = {}) {
     })
     .join("\n");
 
+  // Costs have to survive into the prompt or the budget agent has nothing to do its math on.
   const decisions = ctx.decisions
-    .map((d) => `- [${d.status}] ${d.topic}${d.chosen ? ` -> ${d.chosen}` : ""} options: ${d.options.map((o) => o.label).join(" / ") || "none"}`)
+    .map((d) => {
+      const options = d.options
+        .map((o) => `${o.label}${o.est_cost_per_person ? ` (about $${o.est_cost_per_person} per person)` : ""}`)
+        .join(" / ");
+      return `- [${d.status}] ${d.topic}${d.chosen ? ` -> ${d.chosen}` : ""} options: ${options || "none"}`;
+    })
     .join("\n");
 
   const agents = ctx.agents.map((a) => `- ${a.persona_name} (${a.role}): ${a.task}${a.champions ? `, champions "${a.champions}"` : ""}`).join("\n");

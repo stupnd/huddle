@@ -70,19 +70,39 @@ export async function tick(tripId: string, { force = false } = {}) {
     if (maxUrgency < 3 && !sequenced && sinceAgent < cooldown) return { posted: 0, reason: "cooldown" };
   }
 
+  // Claim the candidates before sending. The inline tick at the end of handleInbound and the
+  // every-15s tick can overlap, and without this they both read the same pending rows and post twice.
+  const { data: claimedRaw } = await s
+    .from("speak_candidates")
+    .update({ status: "posting" })
+    .in("id", live.map((c) => c.id))
+    .eq("status", "pending")
+    .select();
+  const claimed = (claimedRaw ?? []).sort(
+    (a, b) => a.created_at.localeCompare(b.created_at) || a.seq - b.seq
+  );
+  if (!claimed.length) return { posted: 0, reason: "another tick is already posting" };
+
   const { data: agents } = await s.from("agents").select("*").eq("trip_id", tripId);
   const adapter = adapterFor(t.provider);
 
   let posted = 0;
-  for (const c of live) {
+  for (const c of claimed) {
     const text = formatFor(c.speaker, c.content, (agents ?? []) as Agent[]);
-    await adapter.sendToGroup(t.provider_group_id, text);
+    try {
+      await adapter.sendToGroup(t.provider_group_id, text);
+    } catch (err) {
+      // Put it back so the next tick retries instead of losing the message
+      await s.from("speak_candidates").update({ status: "pending" }).eq("id", c.id);
+      console.error("[spokesperson] send failed, candidate returned to pending", err);
+      continue;
+    }
     await s.from("messages").insert({ trip_id: tripId, sender_type: "agent", persona: c.speaker, content: c.content });
     await s.from("speak_candidates").update({
       status: "posted", posted_at: new Date().toISOString(), reason: force ? "forced" : `trigger: ${c.trigger}`,
     }).eq("id", c.id);
     posted++;
-    if (live.length > 1) await new Promise((r) => setTimeout(r, 1200)); // feels like typing, keeps order
+    if (claimed.length > 1) await new Promise((r) => setTimeout(r, 1200)); // feels like typing, keeps order
   }
   await s.from("trips").update({ last_agent_post_at: new Date().toISOString() }).eq("id", tripId);
   return { posted, reason: "posted" };

@@ -9,6 +9,15 @@ export const MODELS = {
 
 type Opts = { model: string; system: string; prompt: string; maxTokens?: number; webSearch?: boolean };
 
+/** Web search answers can carry inline citation markup, which must never reach the chat or the dashboard. */
+function stripCitations(text: string) {
+  return text
+    .replace(/[<(]\s*cite\b[^>]*>/gi, "")
+    .replace(/<\/\s*cite\s*>/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 /** Calls Claude and returns the concatenated text output. */
 export async function ask({ model, system, prompt, maxTokens = 1500, webSearch = false }: Opts): Promise<string> {
   const res = await client.messages.create({
@@ -20,11 +29,12 @@ export async function ask({ model, system, prompt, maxTokens = 1500, webSearch =
       ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 } as any] }
       : {}),
   });
-  return res.content
-    .filter((b: any) => b.type === "text")
-    .map((b: any) => b.text)
-    .join("\n")
-    .trim();
+  return stripCitations(
+    res.content
+      .filter((b: any) => b.type === "text")
+      .map((b: any) => b.text)
+      .join("\n")
+  );
 }
 
 /** Calls Claude and parses a JSON object out of the reply. Returns fallback on failure. */

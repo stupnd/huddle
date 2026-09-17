@@ -11,7 +11,7 @@
  * Run locally:  npm run worker
  * Deploy:       any always-on Node host (Railway, Fly.io, Render background worker)
  */
-import { claw, parseClawMessage } from "../lib/messaging/claw";
+import { claw, DM_TEST_MODE, parseClawMessage } from "../lib/messaging/claw";
 import { handleInbound } from "../lib/pipeline";
 import { db } from "../lib/supabase";
 import { tick } from "../lib/agents/spokesperson";
@@ -88,7 +88,7 @@ async function main() {
           const r = await handleInbound(inbound);
           if (!r.duplicate) console.log(`[huddle] processed group message, orchestrator: ${r.plan ?? "none"}`);
         });
-      } else if (!event.isGroup && event.from && event.text && !event.replay) {
+      } else if (!DM_TEST_MODE && !event.isGroup && event.from && event.text && !event.replay) {
         enqueue(`dm:${event.from}`, () => handleDirectMessage(event.from, event.text));
       }
     } else if (event.type === "error") {
@@ -110,6 +110,9 @@ async function main() {
     }
   }, 15_000);
 
+  if (DM_TEST_MODE) {
+    console.log("[huddle] DM_TEST_MODE is on: your 1:1 chat with Huddle runs as a one-person group. Turn it off for real groups.");
+  }
   console.log("[huddle] worker running");
 }
 

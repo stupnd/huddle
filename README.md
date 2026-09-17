@@ -28,7 +28,11 @@ See [`docs/PRD.md`](docs/PRD.md) for the full product spec.
    npm install
    cp .env.example .env.local
    ```
-2. **Supabase:** create a free project, open the SQL editor, and run `supabase/schema.sql`. Copy the project URL, anon key, and service role key into `.env.local`.
+2. **Supabase:** create a free project, open the SQL editor, and run `supabase/schema.sql`. Copy the project URL, anon key, and service role key into `.env.local`. Check it worked with:
+   ```bash
+   npx tsx --env-file=.env.local scripts/check-db.ts
+   ```
+   It verifies every table and confirms Realtime actually delivers changes. If Realtime fails, run `supabase/enable-realtime.sql`.
 3. **Claude API:** add `ANTHROPIC_API_KEY`. Web search must be enabled for your organization in the Claude Console for child agents to research options.
 4. **Run it**
    ```bash
@@ -78,7 +82,24 @@ npm run dev      # dashboard
 npm run worker   # iMessage worker (keep running)
 ```
 
-### 3. Start a trip
+### 3. Testing on the free trial (one registered number)
+
+The free trial registers a single phone number, and an iMessage group needs at least two, so a real
+group chat is impossible until the Growth plan. `DM_TEST_MODE` closes that gap: your 1:1 chat with
+Huddle is treated as a one-person group, and the full pipeline (listener, orchestrator, child agents,
+Penny, speak gate) runs against it exactly as it would in a real group.
+
+```bash
+# .env.local
+MESSAGING_PROVIDER=claw
+DM_TEST_MODE=true
+```
+
+Register your own number at [clawmessenger.com/routes](https://www.clawmessenger.com/routes) first, or
+Claw drops your messages. Then `npm run worker` and text the Huddle number. Turn `DM_TEST_MODE` off
+before using real groups, or DMs will no longer start new trips.
+
+### 4. Start a trip
 
 From your phone, text Huddle's number (shown in the Claw dashboard):
 
@@ -88,7 +109,7 @@ The worker registers everyone's numbers, creates a new iMessage group with all o
 
 **Why Huddle creates the group:** Claw can't be added to an existing group chat, so trips start with a fresh group.
 
-### 4. Deploy
+### 5. Deploy
 
 - **Dashboard:** Vercel, as normal.
 - **Worker:** any always-on Node host, such as a Railway service or a Render background worker, with start command `npm run worker` (set env vars in the host instead of `.env.local`, and change the script to plain `tsx worker/claw-worker.ts`).

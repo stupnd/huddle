@@ -19,6 +19,7 @@ class ClawClient {
   private lastEventAt = new Date();
   private handlers: ((e: ClawEvent) => void)[] = [];
   private ready: Promise<void> | null = null;
+  private keepalive: ReturnType<typeof setInterval> | null = null;
 
   onEvent(fn: (e: ClawEvent) => void) {
     this.handlers.push(fn);
@@ -61,10 +62,15 @@ class ClawClient {
       ws.onerror = () => { /* the close handler takes care of reconnecting; never log the URL, it has the key */ };
     });
 
-    // Keep the connection alive (the server closes sockets idle for 90s)
-    setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "ping" }));
-    }, 30_000).unref?.();
+    // Keep the connection alive (the server closes sockets idle for 90s).
+    // onclose calls connect() again, so this has to be created once or every reconnect
+    // leaves another ping timer running against the same socket.
+    if (!this.keepalive) {
+      this.keepalive = setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "ping" }));
+      }, 30_000);
+      this.keepalive.unref?.();
+    }
 
     return this.ready;
   }
@@ -107,19 +113,48 @@ class ClawClient {
 
 export const claw = new ClawClient();
 
+/**
+ * DM test mode. The Claw free trial registers a single phone number, and a group needs at least two,
+ * so there is no way to test the real pipeline over iMessage on a trial account. With DM_TEST_MODE=true
+ * a 1:1 chat with Huddle is treated as a one-person group: every agent runs exactly as it would in a
+ * real group chat, just with one participant. Leave it off in production.
+ */
+export const DM_TEST_MODE = process.env.DM_TEST_MODE === "true";
+
+/** A 1:1 chat with no chatId is addressed by phone number instead. */
+const DM_PREFIX = "dm:";
+
 export const clawAdapter: MessagingAdapter = {
   name: "claw",
   async sendToGroup(chatId, text) {
-    const r = await claw.send({ chatId, text });
+    const r = chatId.startsWith(DM_PREFIX)
+      ? await claw.send({ to: chatId.slice(DM_PREFIX.length), text })
+      : await claw.send({ chatId, text });
     if (!r.ok) throw new Error(`Claw send failed: ${r.error ?? r.errorCode ?? r.status}`);
   },
 };
 
-/** Normalizes a Claw inbound event into a Huddle message. Only group messages go through the planner. */
+/**
+ * Normalizes a Claw inbound event into a Huddle message.
+ * Group messages always go through the planner; DMs only when DM_TEST_MODE is on.
+ */
 export function parseClawMessage(event: ClawEvent): InboundMessage | null {
-  if (event.type !== "message" || !event.isGroup || !event.chatId) return null;
+  if (event.type !== "message") return null;
   const text = (event.text ?? "").toString().trim();
   if (!text) return null;
+
+  if (!event.isGroup) {
+    if (!DM_TEST_MODE || !event.from) return null;
+    return {
+      provider: "claw",
+      groupId: event.chatId ?? `${DM_PREFIX}${event.from}`,
+      fromAddress: event.from,
+      text,
+      providerMessageId: event.messageId,
+    };
+  }
+
+  if (!event.chatId) return null;
   return {
     provider: "claw",
     groupId: event.chatId,
