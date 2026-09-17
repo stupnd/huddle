@@ -1,6 +1,6 @@
 import { db, type Message } from "../supabase";
 import { askJSON, MODELS } from "./claude";
-import { describe, type TripContext } from "./context";
+import { describe, findDecision, sameTopic, type TripContext } from "./context";
 
 type Pref = { category: string; value: string; private: boolean; replaces_existing_category?: boolean };
 type Dec = { topic: string; status: "open" | "proposed" | "decided"; chosen: string | null; options: string[] };
@@ -103,7 +103,7 @@ export async function runListener(ctx: TripContext, message: Message, senderLabe
   }
 
   for (const d of normalizeDecisions(out.decisions)) {
-    const existing = ctx.decisions.find((x) => x.topic.toLowerCase() === d.topic.toLowerCase());
+    const existing = findDecision(ctx.decisions, d.topic);
     const options = d.options.map((label) => ({ label }));
     const { error } = existing
       ? await s
@@ -117,6 +117,19 @@ export async function runListener(ctx: TripContext, message: Message, senderLabe
           .eq("id", existing.id)
       : await s.from("decisions").insert({ trip_id: ctx.trip.id, topic: d.topic, status: d.status, chosen: d.chosen, options });
     if (error) console.error("[listener] could not save decision", d, error.message);
+
+    // A debate row and the listener's row can describe the same choice in different words.
+    // When one is decided, close the others so the dashboard stops showing a finished debate.
+    if (d.status === "decided") {
+      const stale = ctx.decisions.filter(
+        (x) => x.id !== existing?.id && x.status !== "decided" && sameTopic(x.topic, d.topic)
+      );
+      for (const row of stale) {
+        await s.from("decisions")
+          .update({ status: "decided", chosen: d.chosen ?? row.chosen, updated_at: new Date().toISOString() })
+          .eq("id", row.id);
+      }
+    }
   }
 
   return out;

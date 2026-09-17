@@ -2,11 +2,11 @@
  * Huddle database health check.
  *
  * Verifies that every table in supabase/schema.sql exists with the columns the app reads,
- * and that Supabase Realtime actually delivers changes for each of them.
+ * and that Row Level Security is on.
  *
- * The Realtime check is a real round trip: it subscribes with the anon key (the same path the
- * dashboard uses), inserts a throwaway row into every table, and waits for the change events.
- * A table that is missing from the supabase_realtime publication will exist but never fire.
+ * The RLS check is a real round trip: it reads each table with the anon key, the same key the
+ * browser ships. With RLS on and no policies, every one of those reads must come back empty.
+ * If any returns a row while the service role can see data, RLS is off and the anon key leaks.
  *
  * Run: npx tsx --env-file=.env.local scripts/check-db.ts
  */
@@ -15,8 +15,6 @@ import { createClient } from "@supabase/supabase-js";
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-const REALTIME_WAIT_MS = 10_000;
 
 /** Columns the app actually reads or writes, per table. */
 const TABLES: Record<string, string[]> = {
@@ -69,55 +67,21 @@ async function main() {
     process.exit(1);
   }
 
-  // ---------- 2. Realtime ----------
-  console.log("\nRealtime (insert a throwaway row into each table, wait for the change event)");
-  const rt = createClient(URL!, ANON!, { auth: { persistSession: false } });
-  const fired = new Set<string>();
-  const channel = rt.channel(`huddle-healthcheck-${Date.now()}`);
+  // ---------- 2. Row Level Security ----------
+  console.log("\nRow Level Security (read each table with the anon key, which must see nothing)");
+  const anon = createClient(URL!, ANON!, { auth: { persistSession: false } });
   for (const table of Object.keys(TABLES)) {
-    channel.on("postgres_changes", { event: "INSERT", schema: "public", table }, () => fired.add(table));
-  }
-
-  const subscribed = await new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => resolve(false), REALTIME_WAIT_MS);
-    channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") { clearTimeout(timer); resolve(true); }
-      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") { clearTimeout(timer); resolve(false); }
-    });
-  });
-
-  if (!subscribed) {
-    console.log(bad("could not open a Realtime channel with the anon key (check the URL, the anon key, and that Realtime is on for the project)"));
-    await rt.removeChannel(channel);
-    process.exit(1);
-  }
-
-  const groupId = `healthcheck-${Date.now()}`;
-  let tripId: string | null = null;
-  try {
-    const { data: trip, error } = await s.from("trips").insert({ provider: "simulator", provider_group_id: groupId, title: "healthcheck" }).select().single();
-    if (error) throw error;
-    tripId = trip.id;
-
-    const { data: participant } = await s.from("participants").insert({ trip_id: tripId, address: "healthcheck", display_name: "healthcheck" }).select().single();
-    const { data: message } = await s.from("messages").insert({ trip_id: tripId, participant_id: participant!.id, sender_type: "human", content: "healthcheck" }).select().single();
-    await s.from("preferences").insert({ trip_id: tripId, participant_id: participant!.id, category: "other", value: "healthcheck", source_message_id: message!.id });
-    const { data: decision } = await s.from("decisions").insert({ trip_id: tripId, topic: "healthcheck", status: "open" }).select().single();
-    await s.from("agents").insert({ trip_id: tripId, kind: "child", role: "stays", persona_name: "Healthcheck", task: "healthcheck", decision_id: decision!.id });
-    await s.from("speak_candidates").insert({ trip_id: tripId, speaker: "huddle", trigger: "intro", content: "healthcheck" });
-
-    const deadline = Date.now() + REALTIME_WAIT_MS;
-    while (fired.size < Object.keys(TABLES).length && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 250));
+    const { data, error } = await anon.from(table).select("id").limit(1);
+    const { count } = await s.from(table).select("*", { count: "exact", head: true });
+    if (error) {
+      console.log(ok(`${table} blocked for anon (${error.code ?? "error"})`));
+    } else if ((data ?? []).length === 0) {
+      if ((count ?? 0) > 0) console.log(ok(`${table} returns nothing to anon`));
+      else console.log(warn(`${table} is empty, so this proves nothing yet. Re-run once the table has rows.`));
+    } else {
+      console.log(bad(`${table} is READABLE with the anon key. RLS is off. Run supabase/schema.sql.`));
+      failures++;
     }
-  } finally {
-    await rt.removeChannel(channel);
-    if (tripId) await s.from("trips").delete().eq("id", tripId);
-  }
-
-  for (const table of Object.keys(TABLES)) {
-    if (fired.has(table)) console.log(ok(`${table} realtime`));
-    else { console.log(bad(`${table} is NOT in the supabase_realtime publication`)); failures++; }
   }
 
   // ---------- 3. Existing data ----------
@@ -128,14 +92,10 @@ async function main() {
   }
 
   if (failures) {
-    console.log(`\n${failures} check(s) failed.`);
-    if (![...fired].length) {
-      console.log(`If tables exist but nothing fired, run this in the SQL editor:`);
-      console.log(`  alter publication supabase_realtime add table ${Object.keys(TABLES).join(", ")};`);
-    }
+    console.log(`\n${failures} check(s) failed. Run supabase/schema.sql in the Supabase SQL editor, then re-run this check.`);
     process.exit(1);
   }
-  console.log("\nAll checks passed. Schema and Realtime are ready.\n");
+  console.log("\nAll checks passed. Schema is ready and the anon key is locked out.\n");
   process.exit(0);
 }
 

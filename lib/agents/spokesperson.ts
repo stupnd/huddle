@@ -5,14 +5,25 @@ import { BUDGET, HUDDLE, prefix } from "./personas";
 const LULL = Number(process.env.LULL_SECONDS ?? 90) * 1000;
 const COOLDOWN = Number(process.env.COOLDOWN_SECONDS ?? 1800) * 1000;
 const STALE = 3 * 60 * 60 * 1000;
+const RECLAIM_MS = 60 * 1000;
 const LEVEL_FACTOR: Record<string, number> = { quiet: 2, normal: 1, active: 0.33, paused: Infinity };
+
+/**
+ * iMessage renders one bubble per send, so a blank line inside a message turns it into a
+ * wall of text. Collapse internal breaks into a single flow regardless of what the model wrote.
+ * The stored copy keeps its formatting for the dashboard.
+ */
+function oneLine(content: string) {
+  return content.replace(/\s*\n+\s*/g, " ").replace(/[ \t]{2,}/g, " ").trim();
+}
 
 /** Formats an agent message. Huddle speaks from its own line, so it gets no prefix. */
 export function formatFor(speaker: string, content: string, agents: Agent[]) {
-  if (speaker === HUDDLE.key) return content;
-  if (speaker === BUDGET.key) return `${prefix(BUDGET.emoji, BUDGET.name)}: ${content}`;
+  const text = oneLine(content);
+  if (speaker === HUDDLE.key) return text;
+  if (speaker === BUDGET.key) return `${prefix(BUDGET.emoji, BUDGET.name)}: ${text}`;
   const a = agents.find((x) => x.id === speaker);
-  return a ? `${prefix(a.emoji, a.persona_name, a.role)}: ${content}` : content;
+  return a ? `${prefix(a.emoji, a.persona_name, a.role)}: ${text}` : text;
 }
 
 /** Sends one agent message right away (direct replies, intros, control confirmations). */
@@ -31,6 +42,16 @@ export async function tick(tripId: string, { force = false } = {}) {
   const s = db();
   const { data: trip } = await s.from("trips").select("*").eq("id", tripId).single();
   if (!trip) return { posted: 0, reason: "no trip" };
+
+  // A worker that dies mid-send leaves rows claimed as "posting" forever, and the query below
+  // only looks at "pending", so they would never be retried. Hand them back after a timeout.
+  // posted_at doubles as the claim time: it is set when claiming and overwritten when posted.
+  await s
+    .from("speak_candidates")
+    .update({ status: "pending" })
+    .eq("trip_id", tripId)
+    .eq("status", "posting")
+    .lt("posted_at", new Date(Date.now() - RECLAIM_MS).toISOString());
 
   const { data: pendingRaw } = await s
     .from("speak_candidates").select("*").eq("trip_id", tripId).eq("status", "pending")
@@ -74,7 +95,7 @@ export async function tick(tripId: string, { force = false } = {}) {
   // every-15s tick can overlap, and without this they both read the same pending rows and post twice.
   const { data: claimedRaw } = await s
     .from("speak_candidates")
-    .update({ status: "posting" })
+    .update({ status: "posting", posted_at: new Date().toISOString() })
     .in("id", live.map((c) => c.id))
     .eq("status", "pending")
     .select();

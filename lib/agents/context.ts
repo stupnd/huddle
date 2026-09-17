@@ -29,6 +29,39 @@ export async function loadContext(tripId: string, messageLimit = 40): Promise<Tr
   };
 }
 
+/**
+ * Decision topics arrive as free text from two agents that word them differently
+ * ("destination" from the listener, "destination: LA vs Bangkok" from the orchestrator),
+ * so exact matching forks one decision into several rows. Compare significant words instead.
+ * Deliberately conservative: merging two genuinely different decisions is worse than a duplicate.
+ */
+const TOPIC_STOPWORDS = new Set([
+  "the", "a", "an", "in", "on", "at", "for", "to", "of", "and", "or", "vs", "versus",
+  "where", "what", "which", "when", "how", "we", "our", "us", "you", "do", "does",
+  "should", "is", "are", "be", "go", "going", "trip",
+]);
+
+function topicWords(topic: string) {
+  return new Set(
+    topic.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
+      .filter((w) => w.length > 2 && !TOPIC_STOPWORDS.has(w))
+  );
+}
+
+export function sameTopic(a: string, b: string) {
+  if (a.toLowerCase().trim() === b.toLowerCase().trim()) return true;
+  const wa = topicWords(a);
+  const wb = topicWords(b);
+  if (!wa.size || !wb.size) return false;
+  const overlap = [...wa].filter((w) => wb.has(w)).length;
+  return overlap / Math.min(wa.size, wb.size) >= 0.6;
+}
+
+/** Finds the decision row a topic belongs to, tolerating different wording. */
+export function findDecision<T extends { topic: string }>(decisions: T[], topic: string) {
+  return decisions.find((d) => sameTopic(d.topic, topic));
+}
+
 /** Human-readable transcript. Private preferences are summarized without values unless includePrivate is true. */
 export function describe(ctx: TripContext, { includePrivate = false } = {}) {
   const nameOf = (id: string | null) =>

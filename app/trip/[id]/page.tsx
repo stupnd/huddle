@@ -6,11 +6,14 @@ const LEVEL_COPY: Record<string, string> = { quiet: "Chill mode", normal: "Norma
 
 export default function TripDashboard({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { trip, participants, preferences, decisions, agents, candidates } = useTrip(id);
+  const { trip, participants, preferences, decisions, agents, candidates, error, refresh } = useTrip(id);
 
-  const act = (prefId: string, action: "confirm" | "delete") =>
-    fetch("/api/preferences", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: prefId, action }) });
+  const act = async (prefId: string, action: "confirm" | "delete") => {
+    await fetch("/api/preferences", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: prefId, action }) });
+    refresh();
+  };
 
+  if (error && !trip) return <main className="dash"><div className="error">{error}</div></main>;
   if (!trip) return <main className="dash"><p className="empty">Loading trip…</p></main>;
 
   const activeAgents = agents.filter((a) => a.status === "active");

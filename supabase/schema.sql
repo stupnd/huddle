@@ -89,21 +89,14 @@ create table if not exists speak_candidates (
 create index if not exists messages_trip_created on messages (trip_id, created_at);
 create index if not exists candidates_trip_status on speak_candidates (trip_id, status);
 
--- Realtime for the dashboard and simulator.
--- Skips tables already in the publication so this whole file stays safe to re-run.
-do $$
-declare t text;
-begin
-  foreach t in array array['trips','participants','messages','preferences','decisions','agents','speak_candidates']
-  loop
-    if not exists (
-      select 1 from pg_publication_tables
-      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
-    ) then
-      execute format('alter publication supabase_realtime add table public.%I', t);
-    end if;
-  end loop;
-end $$;
-
--- MVP NOTE: RLS is left off so the dashboard can read with the anon key.
--- Before real users, enable RLS and gate dashboard access with signed trip links.
+-- Row Level Security.
+-- The browser never reads Supabase directly. The dashboard and the simulator go through
+-- server routes that use the service role key, which bypasses RLS. No policies are needed:
+-- with RLS on and no policy, the anon key reads nothing, which is exactly what we want.
+alter table trips            enable row level security;
+alter table participants     enable row level security;
+alter table messages         enable row level security;
+alter table preferences      enable row level security;
+alter table decisions        enable row level security;
+alter table agents           enable row level security;
+alter table speak_candidates enable row level security;

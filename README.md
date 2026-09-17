@@ -32,7 +32,7 @@ See [`docs/PRD.md`](docs/PRD.md) for the full product spec.
    ```bash
    npx tsx --env-file=.env.local scripts/check-db.ts
    ```
-   It verifies every table and confirms Realtime actually delivers changes. If Realtime fails, run `supabase/enable-realtime.sql`.
+   It verifies every table exists and that RLS is on.
 3. **Claude API:** add `ANTHROPIC_API_KEY`. Web search must be enabled for your organization in the Claude Console for child agents to research options.
 4. **Run it**
    ```bash
@@ -122,7 +122,7 @@ The worker registers everyone's numbers, creates a new iMessage group with all o
 
 ## Known MVP gaps
 
-- **Security:** RLS is off and dashboard links are unguessable UUIDs only. Turn on RLS and signed links before real users.
+- **Security:** RLS is on and the browser never reads Supabase directly, so the anon key exposes nothing. Dashboard access is still only an unguessable UUID in the link, so anyone with the link can view that trip. Add signed personal links before real users.
 - **Private preferences** show as "set privately" on the dashboard for everyone, including the owner.
 - **Long agent runs** (debates) happen inline. That's fine in the Claw worker, but the simulator's API route may time out on Vercel.
 - **No trip history** or per-person opt-in flow yet (both in the PRD).

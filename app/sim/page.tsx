@@ -17,7 +17,8 @@ export default function Simulator() {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
-  const { trip, participants, messages, agents } = useTrip(tripId);
+  const [pending, setPending] = useState<string | null>(null);
+  const { trip, participants, messages, agents, error, refresh } = useTrip(tripId);
   const threadRef = useRef<HTMLDivElement>(null);
 
   const lookup = async (id = groupId) => {
@@ -26,28 +27,41 @@ export default function Simulator() {
   };
   useEffect(() => { lookup(); }, [groupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The speak gate runs on a timer, like a cron would in production
+  // The speak gate runs on a timer, like a cron would in production.
+  // Outside simulator mode the route is secret-gated and the worker ticks instead, so a 401
+  // means stop asking rather than retrying every 15 seconds forever.
   useEffect(() => {
-    const t = setInterval(() => fetch("/api/tick", { method: "POST" }), 15000);
+    const t = setInterval(async () => {
+      const res = await fetch("/api/tick", { method: "POST" }).catch(() => null);
+      if (res?.status === 401) clearInterval(t);
+    }, 15000);
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight }); }, [messages.length]);
+  useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight }); }, [messages.length, pending]);
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!text.trim()) return;
     const body = { groupId, from: sender.address, name: sender.name, text };
     setText("");
+    setPending(text);
     setBusy(true);
     setStatus("agents are thinking…");
     try {
-      const res = await fetch("/api/sim/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
-      if (!tripId && res.tripId) setTripId(res.tripId);
-      setStatus(res.plan && res.plan !== "none" ? `orchestrator: ${res.plan.replace("_", " ")}` : "");
+      const res = await fetch("/api/sim/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const result = await res.json().catch(() => null);
+      if (!res.ok) {
+        setStatus(result?.error ?? `Message failed to process (${res.status}).`);
+        return;
+      }
+      if (result.tripId && result.tripId !== tripId) setTripId(result.tripId);
+      else refresh();
+      setStatus(result.plan && result.plan !== "none" ? `orchestrator: ${result.plan.replace("_", " ")}` : "");
     } catch {
       setStatus("Message failed to process. Check the server logs.");
     } finally {
+      setPending(null);
       setBusy(false);
     }
   };
@@ -56,6 +70,7 @@ export default function Simulator() {
     const res = await fetch(`/api/tick?force=1${tripId ? `&trip=${tripId}` : ""}`, { method: "POST" }).then((r) => r.json());
     const n = (res.results ?? []).reduce((acc: number, r: any) => acc + (r.posted ?? 0), 0);
     setStatus(n ? `posted ${n} held message${n === 1 ? "" : "s"}` : "nothing waiting to post");
+    refresh();
   };
 
   const nameFor = (participantId: string | null) => participants.find((p) => p.id === participantId);
@@ -68,7 +83,8 @@ export default function Simulator() {
           <small>{participants.length} people, Huddle{agents.filter((a) => a.status === "active").length ? `, ${agents.filter((a) => a.status === "active").map((a) => a.persona_name).join(", ")}` : ""}</small>
         </header>
         <div className="thread" ref={threadRef}>
-          {messages.length === 0 && <p className="empty">Say something to start planning. Huddle joins on the first message.</p>}
+          {error && <div className="error">{error}</div>}
+          {messages.length === 0 && !pending && !error && <p className="empty">Say something to start planning. Huddle joins on the first message.</p>}
           {messages.map((m) => {
             if (m.sender_type === "agent") {
               const l = speakerLabel(m.persona, agents);
@@ -88,6 +104,11 @@ export default function Simulator() {
               </div>
             );
           })}
+          {pending && (
+            <div className="row me pending">
+              <div className="bubble">{pending}</div>
+            </div>
+          )}
         </div>
         <div className="composer">
           <div className="senders" role="group" aria-label="Send as">

@@ -25,7 +25,7 @@ Speak when:
 - a cheaper option of similar quality exists (urgency 2)
 - someone asked about cost and nobody answered (urgency 2)
 Otherwise speak=false. Silence is the default.
-Style: short, casual, 1 to 2 sentences, no bullet points, no em dashes.
+Style: short, casual, no bullet points, no em dashes. Hard limit: two short sentences, one paragraph, no line breaks.
 Reply with JSON only: {"speak": false, "urgency": 1, "message": ""}`,
       prompt: describe(ctx, { includePrivate: true }),
     },

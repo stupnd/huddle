@@ -1,53 +1,80 @@
 "use client";
-import { useEffect, useState } from "react";
-import { browserDb, type Agent, type Decision, type Message, type Participant, type Preference, type Trip } from "../supabase";
+import { useCallback, useEffect, useState } from "react";
+import type { Agent, Decision, Message, Participant, Preference, Trip } from "../supabase";
 
 export type SpeakCandidate = {
   id: string; speaker: string; trigger: string; urgency: number; content: string; status: string; reason: string | null; created_at: string;
 };
 
-/** Loads a trip and keeps it live with Supabase Realtime. */
+type TripData = {
+  trip: Trip | null;
+  participants: Participant[];
+  messages: Message[];
+  preferences: Preference[];
+  decisions: Decision[];
+  agents: Agent[];
+  candidates: SpeakCandidate[];
+};
+
+const EMPTY: TripData = { trip: null, participants: [], messages: [], preferences: [], decisions: [], agents: [], candidates: [] };
+const POLL_MS = 2000;
+
+/**
+ * Loads a trip from /api/trip/[id] and keeps it fresh by polling.
+ *
+ * The browser does not read Supabase directly: RLS is on, so anon reads return nothing.
+ * Polling also avoids the Realtime binding that silently delivered no events before.
+ */
 export function useTrip(tripId: string | null) {
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [preferences, setPreferences] = useState<Preference[]>([]);
-  const [decisions, setDecisions] = useState<Decision[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [candidates, setCandidates] = useState<SpeakCandidate[]>([]);
+  const [data, setData] = useState<TripData>(EMPTY);
+  const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  /** Reload immediately instead of waiting for the next poll. */
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    setData(EMPTY);
+    setError(null);
+  }, [tripId]);
 
   useEffect(() => {
     if (!tripId) return;
-    const s = browserDb();
-    const load = async () => {
-      const [t, p, m, pr, d, a, c] = await Promise.all([
-        s.from("trips").select("*").eq("id", tripId).single(),
-        s.from("participants").select("*").eq("trip_id", tripId),
-        s.from("messages").select("*").eq("trip_id", tripId).order("created_at"),
-        s.from("preferences").select("*").eq("trip_id", tripId).order("updated_at"),
-        s.from("decisions").select("*").eq("trip_id", tripId).order("created_at"),
-        s.from("agents").select("*").eq("trip_id", tripId).order("created_at"),
-        s.from("speak_candidates").select("*").eq("trip_id", tripId).order("created_at", { ascending: false }).limit(50),
-      ]);
-      setTrip(t.data as Trip);
-      setParticipants((p.data ?? []) as Participant[]);
-      setMessages((m.data ?? []) as Message[]);
-      setPreferences((pr.data ?? []) as Preference[]);
-      setDecisions((d.data ?? []) as Decision[]);
-      setAgents((a.data ?? []) as Agent[]);
-      setCandidates((c.data ?? []) as SpeakCandidate[]);
-    };
-    load();
-    // Simple and robust for an MVP: any change reloads the trip
-    const channel = s
-      .channel(`trip-${tripId}`)
-      .on("postgres_changes", { event: "*", schema: "public", filter: `trip_id=eq.${tripId}` } as any, load)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "trips", filter: `id=eq.${tripId}` }, load)
-      .subscribe();
-    return () => { s.removeChannel(channel); };
-  }, [tripId]);
+    let cancelled = false;
 
-  return { trip, participants, messages, preferences, decisions, agents, candidates };
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/trip/${tripId}`, { cache: "no-store" });
+        const body = await res.json().catch(() => null);
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(body?.error ?? `Could not load the trip (${res.status}).`);
+          return;
+        }
+        setData({
+          trip: body.trip as Trip,
+          participants: (body.participants ?? []) as Participant[],
+          messages: (body.messages ?? []) as Message[],
+          preferences: (body.preferences ?? []) as Preference[],
+          decisions: (body.decisions ?? []) as Decision[],
+          agents: (body.agents ?? []) as Agent[],
+          candidates: (body.candidates ?? []) as SpeakCandidate[],
+        });
+        setError(null);
+      } catch {
+        if (!cancelled) setError("Could not reach the server. Is npm run dev still running?");
+      }
+    };
+
+    load();
+    const timer = setInterval(load, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [tripId, nonce]);
+
+  return { ...data, error, refresh };
 }
 
 export function speakerLabel(persona: string | null, agents: Agent[]) {

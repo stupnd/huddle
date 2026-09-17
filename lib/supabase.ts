@@ -14,7 +14,10 @@ export function db(): SupabaseClient {
   return admin;
 }
 
-/** Browser client with the anon key, for realtime subscriptions. */
+/**
+ * Browser client with the anon key. Unused: RLS is on and no policies are defined, so reads
+ * through this return nothing. The dashboard and simulator go through /api/trip/[id] instead.
+ */
 export function browserDb(): SupabaseClient {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

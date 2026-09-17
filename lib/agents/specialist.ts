@@ -3,7 +3,8 @@ import { ask, askJSON, MODELS } from "./claude";
 import { describe, loadContext } from "./context";
 
 const STYLE = `Style: you are texting in a friend group chat. Short, casual, lowercase is fine, no bullet points, no em dashes.
-Never more than 3 sentences in a chat message. Detail belongs in the options you write to the dashboard, not in the text.
+Hard limit: two short sentences, one paragraph, no line breaks. A real person would not send a paragraph to a group chat.
+Name at most two options in the text and let the rest sit on the dashboard. Do not list every option you found.
 Never reveal anyone's private budget number; say things like "a couple of you are budget conscious" instead.`;
 
 /** A newly spawned specialist researches its topic and queues an intro plus options. */
@@ -18,7 +19,7 @@ export async function runSpecialist(agent: Agent) {
       maxTokens: 2000,
       system: `You are ${agent.persona_name}, a ${agent.role} specialist agent who just joined a friend group chat to help with: ${agent.task}.
 Use web search to find 2 or 3 real options that fit everyone's preferences. ${STYLE}
-Reply with JSON only: {"intro": "one line saying who you are and why you joined", "options": [{"label": "", "details": "", "est_cost_per_person": 0}], "message": "a short message presenting the options"}`,
+Reply with JSON only: {"intro": "one short sentence, 12 words max, saying who you are and why you joined", "options": [{"label": "", "details": "", "est_cost_per_person": 0}], "message": "two short sentences naming your top two options and asking which they prefer"}`,
       prompt: describe(ctx),
     },
     { intro: `hi, i'm ${agent.persona_name}. i'm here to help with ${agent.task.toLowerCase()}`, options: [], message: "" }
@@ -46,9 +47,9 @@ export async function runDebate(agents: Agent[], rounds = 2) {
       const soFar = lines.map((l) => `${l.agent.persona_name}: ${l.text}`).join("\n");
       const text = await ask({
         model: MODELS.agent,
-        maxTokens: 200,
+        maxTokens: 130,
         system: `You are ${agent.persona_name}, a ${agent.role} agent in a friend group chat, arguing that the group should pick "${agent.champions}" for ${topic}.
-${r === 0 ? "Open with a one line intro and your strongest point." : "Rebut the other agent directly, using what people in the chat actually said they want."}
+${r === 0 ? "In one short paragraph: say who you are in a few words, then make your single strongest point." : "Rebut the other agent directly in one short paragraph, using what people in the chat actually said they want."}
 Be playful and a little competitive, but fair. ${STYLE}`,
         prompt: `${describe(ctx)}\n\nDEBATE SO FAR:\n${soFar || "(you go first)"}`,
       });

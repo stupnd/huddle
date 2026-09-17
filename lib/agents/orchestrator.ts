@@ -1,6 +1,6 @@
-import { db } from "../supabase";
+import { db, type Agent } from "../supabase";
 import { askJSON, MODELS } from "./claude";
-import { describe, type TripContext } from "./context";
+import { describe, findDecision, loadContext, type TripContext } from "./context";
 import { pickChildPersona } from "./personas";
 
 type Plan = {
@@ -36,6 +36,8 @@ const ROLE_SYNONYMS: [RegExp, string][] = [
   [/food|eat|restaurant|dining|brunch|cafe/, "food"],
   [/activit|thing to do|attraction|sightsee|itinerar/, "activities"],
   [/weather|forecast/, "weather"],
+  [/destination|where to go|city|country/, "destination"],
+  [/guide|local|itinerary|planner/, "activities"],
 ];
 
 function normalizeRole(raw: string) {
@@ -43,7 +45,10 @@ function normalizeRole(raw: string) {
   return ROLE_SYNONYMS.find(([re]) => re.test(r))?.[1] ?? r.trim();
 }
 
-export async function runOrchestrator(ctx: TripContext) {
+/** The plan, plus any agents it just spawned so the pipeline can run them. */
+type PlanResult = Plan & { agents?: Agent[] };
+
+export async function runOrchestrator(ctx: TripContext, depth = 0): Promise<PlanResult> {
   if (ctx.trip.activity_level === "paused") return { action: "none" } as Plan;
 
   const plan = await askJSON<Plan>(
@@ -59,7 +64,10 @@ export async function runOrchestrator(ctx: TripContext) {
   if (plan.role) plan.role = normalizeRole(plan.role);
 
   const s = db();
-  const taken = ctx.agents.map((a) => a.persona_name);
+  // Includes agents that already left. Reusing a retired name reads as one agent
+  // saying goodbye and immediately coming back as somebody else.
+  const { data: everSpawned } = await s.from("agents").select("persona_name").eq("trip_id", ctx.trip.id);
+  const taken = (everSpawned ?? []).map((a) => a.persona_name);
 
   if (plan.action === "retire_agents" && plan.retire_agent_ids?.length) {
     for (const id of plan.retire_agent_ids) {
@@ -71,13 +79,19 @@ export async function runOrchestrator(ctx: TripContext) {
         content: "That's settled, so I'm heading out. Details are in the app. Bye!",
       });
     }
+    // Retiring frees a slot. Without this, a request that arrives while the agent cap is
+    // full gets silently dropped instead of spawning the specialist it asked for.
+    if (depth === 0) {
+      const next = await runOrchestrator(await loadContext(ctx.trip.id), 1);
+      if (next.action !== "none") return next;
+    }
     return plan;
   }
 
   if (!plan.role || !plan.topic) return plan;
   if (ctx.agents.some((a) => a.role === plan.role)) return { action: "none" } as Plan;
 
-  let decision = ctx.decisions.find((d) => d.topic.toLowerCase() === plan.topic!.toLowerCase());
+  let decision = findDecision(ctx.decisions, plan.topic);
   if (!decision) {
     const { data } = await s.from("decisions").insert({ trip_id: ctx.trip.id, topic: plan.topic, status: "open" }).select().single();
     decision = data as any;
