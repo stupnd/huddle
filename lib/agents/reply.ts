@@ -6,8 +6,8 @@ import { VOICE } from "./voice";
 export async function directReply(ctx: TripContext, speaker: { name: string; role: string }, question: string) {
   return ask({
     model: MODELS.agent,
-    // Web search tool blocks come out of this budget, so a tight cap can leave no room for the
-    // actual answer and return an empty string. Length is controlled by the word limit in VOICE.
+    // Length is controlled by VOICE and capLength, not by this cap. ask() raises it as needed
+    // so thinking and web search never crowd out the answer.
     maxTokens: 1200,
     webSearch: true,
     system: `You are ${speaker.name}, the ${speaker.role} in Huddle, in a friend group chat. Someone tagged you directly, so answer the question they actually asked.

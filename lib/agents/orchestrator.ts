@@ -4,8 +4,7 @@ import { describe, findDecision, loadContext, type TripContext } from "./context
 import { pickChildPersona } from "./personas";
 
 type Plan = {
-  action: "none" | "spawn_specialist" | "start_debate" | "retire_agents" | "answer";
-  answer_agent_id?: string;   // for "answer": the active agent that should reply
+  action: "none" | "spawn_specialist" | "start_debate" | "retire_agents";
   role?: string;              // stays | flights | transport | food | activities | nightlife
   topic?: string;             // the decision topic
   reason?: string;
@@ -14,7 +13,7 @@ type Plan = {
 };
 
 const SYSTEM = `You are the Orchestrator inside Huddle, a group trip planner in an iMessage group chat. You never talk in the chat.
-You decide whether the group needs a specialist agent right now.
+Someone just addressed Huddle directly. Decide whether what they asked for needs a specialist agent brought in.
 
 Choose ONE action:
 - "none": nothing needed. This is the right answer most of the time.
@@ -29,7 +28,6 @@ Choose ONE action:
   A direct question like "how do we get there" or "can you give us a timestamped plan" is a spawn, not a "none".
 - "start_debate": there is a contested decision with 2 clear sides that people disagree on. Provide role, topic, reason, and sides (exactly 2 short option labels).
 - "retire_agents": a decision is done and child agents working on it should leave. Provide retire_agent_ids.
-- "answer": someone asked a question that an agent ALREADY in the chat should answer, and that agent has not answered it yet. Provide answer_agent_id. Use this whenever the latest message asks for something in an active agent's area, even if nobody tagged them by name. A question left hanging is the worst outcome.
 
 Never spawn an agent for a topic that already has an active agent. Max 2 active child agents (3 during a debate).
 Reply with JSON only: {"action": "none"}`;
@@ -53,6 +51,37 @@ const ROLE_SYNONYMS: [RegExp, string][] = [
 function normalizeRole(raw: string) {
   const r = raw.toLowerCase();
   return ROLE_SYNONYMS.find(([re]) => re.test(r))?.[1] ?? r.trim();
+}
+
+/** Reserves a persona name, finds or creates the decision, and inserts the agent row. */
+export async function spawnSpecialist(ctx: TripContext, role: string, topic: string): Promise<Agent | null> {
+  const s = db();
+  const normalized = normalizeRole(role);
+  if (ctx.agents.some((a) => a.role === normalized)) return null;
+  const { data: everSpawned } = await s.from("agents").select("persona_name").eq("trip_id", ctx.trip.id);
+  const taken = (everSpawned ?? []).map((a) => a.persona_name);
+  let decision = findDecision(ctx.decisions, topic);
+  if (!decision) {
+    const { data } = await s.from("decisions").insert({ trip_id: ctx.trip.id, topic, status: "open" }).select().single();
+    decision = data as any;
+  }
+  const persona = pickChildPersona(taken, normalized);
+  const { data: agent } = await s.from("agents").insert({
+    trip_id: ctx.trip.id, kind: "child", role: normalized, persona_name: persona.name, emoji: persona.emoji,
+    task: `Find options for: ${topic}`, decision_id: decision!.id,
+  }).select().single();
+  return agent as Agent;
+}
+
+/** Marks an agent as gone and queues its one-line sign-off. Used by the orchestrator and the dashboard. */
+export async function dismissAgent(tripId: string, agentId: string, sayGoodbye = true) {
+  const s = db();
+  await s.from("agents").update({ status: "left" }).eq("id", agentId);
+  if (sayGoodbye) {
+    await s.from("speak_candidates").insert({
+      trip_id: tripId, speaker: agentId, trigger: "signoff", urgency: 1, content: "that's sorted, i'm out 👋",
+    });
+  }
 }
 
 /** The plan, plus any agents it just spawned so the pipeline can run them. */
@@ -86,14 +115,8 @@ export async function runOrchestrator(ctx: TripContext, depth = 0): Promise<Plan
     for (const id of plan.retire_agent_ids) {
       const agent = ctx.agents.find((a) => a.id === id);
       if (!agent) continue;
-      await s.from("agents").update({ status: "left" }).eq("id", id);
-      if (!saidGoodbye) {
-        await s.from("speak_candidates").insert({
-          trip_id: ctx.trip.id, speaker: id, trigger: "signoff", urgency: 1,
-          content: "that's sorted, i'm out 👋",
-        });
-        saidGoodbye = true;
-      }
+      await dismissAgent(ctx.trip.id, id, !saidGoodbye);
+      saidGoodbye = true;
     }
     // Retiring frees a slot. Without this, a request that arrives while the agent cap is
     // full gets silently dropped instead of spawning the specialist it asked for.
@@ -102,11 +125,6 @@ export async function runOrchestrator(ctx: TripContext, depth = 0): Promise<Plan
       if (next.action !== "none") return next;
     }
     return plan;
-  }
-
-  // An agent already in the chat handles it, so nothing to spawn
-  if (plan.action === "answer") {
-    return ctx.agents.some((a) => a.id === plan.answer_agent_id) ? plan : { action: "none" };
   }
 
   if (!plan.role || !plan.topic) return plan;
@@ -119,12 +137,8 @@ export async function runOrchestrator(ctx: TripContext, depth = 0): Promise<Plan
   }
 
   if (plan.action === "spawn_specialist" && ctx.agents.length < 2) {
-    const persona = pickChildPersona(taken, plan.role);
-    const { data: agent } = await s.from("agents").insert({
-      trip_id: ctx.trip.id, kind: "child", role: plan.role, persona_name: persona.name, emoji: persona.emoji,
-      task: `Find options for: ${plan.topic}`, decision_id: decision!.id,
-    }).select().single();
-    return { ...plan, agents: [agent] };
+    const agent = await spawnSpecialist(ctx, plan.role, plan.topic);
+    return agent ? { ...plan, agents: [agent] } : { action: "none" };
   }
 
   if (plan.action === "start_debate" && plan.sides?.length === 2 && ctx.trip.debate_mode !== "off" && ctx.agents.length < 2) {

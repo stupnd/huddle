@@ -17,9 +17,26 @@ function oneLine(content: string) {
   return content.replace(/[ \t]*\n\s*\n[\s]*/g, "\n").replace(/[ \t]{2,}/g, " ").trim();
 }
 
+// Prompts ask for short messages; this guarantees it. Cut only at a line boundary so nothing
+// ever looks chopped, and never cut a lone paragraph mid-sentence. Six lines is enough for a
+// timestamped day plan, and far more than a normal reply needs.
+const MAX_LINES = 6;
+const MAX_CHARS = 420;
+
+function capLength(content: string) {
+  let lines = content.split("\n").slice(0, MAX_LINES);
+  while (lines.length > 1 && lines.join("\n").length > MAX_CHARS) lines.pop();
+  let out = lines.join("\n");
+  if (out.length > MAX_CHARS) {
+    const cut = Math.max(out.lastIndexOf(". ", MAX_CHARS), out.lastIndexOf("! ", MAX_CHARS), out.lastIndexOf("? ", MAX_CHARS));
+    if (cut > 40) out = out.slice(0, cut + 1);
+  }
+  return out.trim();
+}
+
 /** Formats an agent message. Huddle speaks from its own line, so it gets no prefix. */
 export function formatFor(speaker: string, content: string, agents: Agent[]) {
-  const text = oneLine(content);
+  const text = capLength(oneLine(content));
   if (speaker === HUDDLE.key) return text;
   if (speaker === BUDGET.key) return `${prefix(BUDGET.emoji, BUDGET.name)}: ${text}`;
   const a = agents.find((x) => x.id === speaker);

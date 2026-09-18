@@ -55,7 +55,9 @@ export async function runDebate(agents: Agent[], rounds = 2) {
       const soFar = lines.map((l) => `${l.agent.persona_name}: ${l.text}`).join("\n");
       const text = await ask({
         model: MODELS.agent,
-        maxTokens: 130,
+        // Enough room for a short answer. The line cap in formatFor keeps it short in the chat;
+        // a tight token cap here just produced sentences cut off mid-word.
+        maxTokens: 400,
         system: `You are ${agent.persona_name}, a ${agent.role} agent in a friend group chat, arguing that the group should pick "${agent.champions}" for ${topic}.
 ${r === 0 ? "Open with your single strongest concrete point. Do not introduce yourself." : "Rebut the other agent directly, using what people in the chat actually said they want."}
 Be playful and a little competitive, but fair. ${STYLE}`,
