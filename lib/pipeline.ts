@@ -93,6 +93,21 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   if (plan.action === "spawn_specialist" && spawned[0]) await runSpecialist(spawned[0]);
   if (plan.action === "start_debate" && spawned.length === 2) await runDebate(spawned);
 
+  // An agent already in the chat answers a question in its area without being tagged.
+  // Without this a specialist goes mute after it introduces itself, and questions sit unanswered.
+  if (plan.action === "answer" && !tagged) {
+    const responder = ctx.agents.find((a) => a.id === plan.answer_agent_id);
+    if (responder) {
+      const answer = await directReply(
+        ctx,
+        { name: responder.persona_name, role: `${responder.role} agent` },
+        msg.text
+      );
+      await postNow(ctx.trip, responder.id, answer);
+      ctx = await loadContext(trip.id);
+    }
+  }
+
   // 4. Budget agent checks whether money needs raising
   ctx = await loadContext(trip.id);
   await runBudget(ctx);

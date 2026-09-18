@@ -4,7 +4,8 @@ import { describe, findDecision, loadContext, type TripContext } from "./context
 import { pickChildPersona } from "./personas";
 
 type Plan = {
-  action: "none" | "spawn_specialist" | "start_debate" | "retire_agents";
+  action: "none" | "spawn_specialist" | "start_debate" | "retire_agents" | "answer";
+  answer_agent_id?: string;   // for "answer": the active agent that should reply
   role?: string;              // stays | flights | transport | food | activities | nightlife
   topic?: string;             // the decision topic
   reason?: string;
@@ -17,9 +18,18 @@ You decide whether the group needs a specialist agent right now.
 
 Choose ONE action:
 - "none": nothing needed. This is the right answer most of the time.
-- "spawn_specialist": the group is going back and forth on a topic (where to stay, how to get there, where to eat) and nobody has concrete options. Provide role, topic, reason.
+- "spawn_specialist": the group needs concrete options or answers on a topic and nobody has them yet. This includes someone asking a direct logistics question. Provide role, topic, reason.
+  Pick the role from what they are actually asking about:
+    stays: where to sleep, hotels, hostels, airbnbs
+    transport: how do we get there, airport to hotel, getting around, trains, rental cars, "how do we get from X to Y"
+    activities: what should we do, things to see, an itinerary, a timestamped plan for a day
+    food: where to eat, restaurants, brunch
+    flights: which flights, when to fly
+    nightlife: bars, clubs, going out
+  A direct question like "how do we get there" or "can you give us a timestamped plan" is a spawn, not a "none".
 - "start_debate": there is a contested decision with 2 clear sides that people disagree on. Provide role, topic, reason, and sides (exactly 2 short option labels).
 - "retire_agents": a decision is done and child agents working on it should leave. Provide retire_agent_ids.
+- "answer": someone asked a question that an agent ALREADY in the chat should answer, and that agent has not answered it yet. Provide answer_agent_id. Use this whenever the latest message asks for something in an active agent's area, even if nobody tagged them by name. A question left hanging is the worst outcome.
 
 Never spawn an agent for a topic that already has an active agent. Max 2 active child agents (3 during a debate).
 Reply with JSON only: {"action": "none"}`;
@@ -70,14 +80,20 @@ export async function runOrchestrator(ctx: TripContext, depth = 0): Promise<Plan
   const taken = (everSpawned ?? []).map((a) => a.persona_name);
 
   if (plan.action === "retire_agents" && plan.retire_agent_ids?.length) {
+    // Retiring two agents used to queue two identical goodbyes back to back, which reads as spam.
+    // Only the first one says anything, and it stays short.
+    let saidGoodbye = false;
     for (const id of plan.retire_agent_ids) {
       const agent = ctx.agents.find((a) => a.id === id);
       if (!agent) continue;
       await s.from("agents").update({ status: "left" }).eq("id", id);
-      await s.from("speak_candidates").insert({
-        trip_id: ctx.trip.id, speaker: id, trigger: "signoff", urgency: 1,
-        content: "That's settled, so I'm heading out. Details are in the app. Bye!",
-      });
+      if (!saidGoodbye) {
+        await s.from("speak_candidates").insert({
+          trip_id: ctx.trip.id, speaker: id, trigger: "signoff", urgency: 1,
+          content: "that's sorted, i'm out 👋",
+        });
+        saidGoodbye = true;
+      }
     }
     // Retiring frees a slot. Without this, a request that arrives while the agent cap is
     // full gets silently dropped instead of spawning the specialist it asked for.
@@ -86,6 +102,11 @@ export async function runOrchestrator(ctx: TripContext, depth = 0): Promise<Plan
       if (next.action !== "none") return next;
     }
     return plan;
+  }
+
+  // An agent already in the chat handles it, so nothing to spawn
+  if (plan.action === "answer") {
+    return ctx.agents.some((a) => a.id === plan.answer_agent_id) ? plan : { action: "none" };
   }
 
   if (!plan.role || !plan.topic) return plan;

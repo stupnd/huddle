@@ -1,6 +1,7 @@
 import { db } from "../supabase";
 import { askJSON, MODELS } from "./claude";
 import { describe, type TripContext } from "./context";
+import { VOICE } from "./voice";
 
 /**
  * Penny, the budget agent. Permanent and visible. Runs whenever options change and
@@ -24,8 +25,14 @@ Speak when:
 - an option puts anyone over their budget (urgency 3)
 - a cheaper option of similar quality exists (urgency 2)
 - someone asked about cost and nobody answered (urgency 2)
-Otherwise speak=false. Silence is the default.
-Style: short, casual, no bullet points, no em dashes. Hard limit: two short sentences, one paragraph, no line breaks.
+
+Stay silent when:
+- the latest human message asks a question that nobody has answered yet. Money can wait, let them get their answer first.
+- someone has said to deal with money later, or told you to drop it
+- nothing about the cost picture has changed since you last spoke
+Otherwise speak=false. Silence is the default and it is the right call most of the time.
+
+${VOICE}
 Reply with JSON only: {"speak": false, "urgency": 1, "message": ""}`,
       prompt: describe(ctx, { includePrivate: true }),
     },

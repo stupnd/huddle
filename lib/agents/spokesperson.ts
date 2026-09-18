@@ -9,12 +9,12 @@ const RECLAIM_MS = 60 * 1000;
 const LEVEL_FACTOR: Record<string, number> = { quiet: 2, normal: 1, active: 0.33, paused: Infinity };
 
 /**
- * iMessage renders one bubble per send, so a blank line inside a message turns it into a
- * wall of text. Collapse internal breaks into a single flow regardless of what the model wrote.
- * The stored copy keeps its formatting for the dashboard.
+ * iMessage renders one bubble per send, so a blank line between a greeting and the content
+ * turns a short message into a wall of text. Collapse blank lines, but keep single newlines:
+ * a timestamped itinerary needs one line per stop, and flattening it makes it unreadable.
  */
 function oneLine(content: string) {
-  return content.replace(/\s*\n+\s*/g, " ").replace(/[ \t]{2,}/g, " ").trim();
+  return content.replace(/[ \t]*\n\s*\n[\s]*/g, "\n").replace(/[ \t]{2,}/g, " ").trim();
 }
 
 /** Formats an agent message. Huddle speaks from its own line, so it gets no prefix. */
@@ -28,6 +28,11 @@ export function formatFor(speaker: string, content: string, agents: Agent[]) {
 
 /** Sends one agent message right away (direct replies, intros, control confirmations). */
 export async function postNow(trip: Trip, speaker: string, content: string) {
+  // A model that returns no text must never surface as a bare name prefix in the chat.
+  if (!content?.trim()) {
+    console.warn(`[spokesperson] dropped an empty message from ${speaker}`);
+    return;
+  }
   const s = db();
   const { data: agents } = await s.from("agents").select("*").eq("trip_id", trip.id);
   await adapterFor(trip.provider).sendToGroup(trip.provider_group_id, formatFor(speaker, content, (agents ?? []) as Agent[]));
@@ -61,13 +66,20 @@ export async function tick(tripId: string, { force = false } = {}) {
 
   const now = Date.now();
 
+  // Same guard as postNow: an empty candidate would post as just a name prefix
+  for (const c of pending.filter((c) => !c.content?.trim())) {
+    await s.from("speak_candidates").update({ status: "dropped", reason: "empty message" }).eq("id", c.id);
+  }
+
   // Drop stale low-value candidates
   for (const c of pending) {
     if (now - new Date(c.created_at).getTime() > STALE && c.urgency < 3) {
       await s.from("speak_candidates").update({ status: "dropped", reason: "stale: the moment passed" }).eq("id", c.id);
     }
   }
-  const live = pending.filter((c) => now - new Date(c.created_at).getTime() <= STALE || c.urgency >= 3);
+  const live = pending.filter(
+    (c) => c.content?.trim() && (now - new Date(c.created_at).getTime() <= STALE || c.urgency >= 3)
+  );
   if (!live.length) return { posted: 0, reason: "only stale candidates" };
 
   const t = trip as Trip;
