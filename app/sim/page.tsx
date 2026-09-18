@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { speakerLabel, useTrip } from "@/lib/ui/useTrip";
+import "./sim.css";
 
 const FRIENDS = [
   { address: "+15550000001", name: "Stuti" },
