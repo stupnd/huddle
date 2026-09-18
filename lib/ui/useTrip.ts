@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import type { Agent, Decision, Message, Participant, Preference, Trip } from "../supabase";
+import type { Agent, Decision, ItineraryItem, Message, Participant, Preference, Trip } from "../supabase";
 
 export type SpeakCandidate = {
   id: string; speaker: string; trigger: string; urgency: number; content: string; status: string; reason: string | null; created_at: string;
@@ -14,9 +14,11 @@ type TripData = {
   decisions: Decision[];
   agents: Agent[];
   candidates: SpeakCandidate[];
+  itinerary: ItineraryItem[];
+  itineraryReady: boolean;
 };
 
-const EMPTY: TripData = { trip: null, participants: [], messages: [], preferences: [], decisions: [], agents: [], candidates: [] };
+const EMPTY: TripData = { trip: null, participants: [], messages: [], preferences: [], decisions: [], agents: [], candidates: [], itinerary: [], itineraryReady: true };
 const POLL_MS = 2000;
 
 /**
@@ -59,6 +61,8 @@ export function useTrip(tripId: string | null) {
           decisions: (body.decisions ?? []) as Decision[],
           agents: (body.agents ?? []) as Agent[],
           candidates: (body.candidates ?? []) as SpeakCandidate[],
+          itinerary: (body.itinerary ?? []) as ItineraryItem[],
+          itineraryReady: body.itineraryReady !== false,
         });
         setError(null);
       } catch {

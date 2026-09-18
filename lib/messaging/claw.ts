@@ -8,6 +8,11 @@ import type { InboundMessage, MessagingAdapter } from "./types";
 
 const WS_URL = process.env.CLAW_WS_URL ?? "wss://claw-messenger.onrender.com/ws";
 const REST_URL = process.env.CLAW_REST_URL ?? "https://claw-messenger.onrender.com";
+const MAX_BACKOFF_MS = 30_000;
+// After this many failures with no successful open, the problem is systemic (service down,
+// key revoked, throttled) and fast retries only make it worse. Back off hard instead.
+const FAILURES_BEFORE_LONG_WAIT = 8;
+const LONG_WAIT_MS = 5 * 60_000;
 
 type SendResult = { type: "send.result"; id: string; ok: boolean; chatId?: string; messageId?: string; error?: string; status?: string; errorCode?: string };
 type ClawEvent = { type: string; [k: string]: any };
@@ -17,6 +22,8 @@ class ClawClient {
   private pending = new Map<string, (r: SendResult) => void>();
   private backoff = 1000;
   private lastEventAt = new Date();
+  private openedAt = Date.now();
+  private consecutiveFailures = 0;
   private handlers: ((e: ClawEvent) => void)[] = [];
   private ready: Promise<void> | null = null;
   private keepalive: ReturnType<typeof setInterval> | null = null;
@@ -34,7 +41,9 @@ class ClawClient {
 
       ws.onopen = () => {
         console.log("[claw] connected");
+        this.openedAt = Date.now();
         this.backoff = 1000;
+        this.consecutiveFailures = 0;
         // Replay anything saved while we were disconnected
         ws.send(JSON.stringify({ type: "sync", since: this.lastEventAt.toISOString() }));
         resolve();
@@ -53,11 +62,25 @@ class ClawClient {
         for (const h of this.handlers) h(event);
       };
 
-      ws.onclose = () => {
-        console.warn(`[claw] disconnected, reconnecting in ${this.backoff}ms`);
+      ws.onclose = (ev: CloseEvent) => {
+        // The close code is the only signal for why Claw dropped us: 1008 or 4001 style codes
+        // mean the key was rejected, 1011 means a server fault, 1006 means the socket died
+        // without a handshake. Without logging it, a reconnect loop is undiagnosable.
+        this.consecutiveFailures++;
+        const held = Date.now() - this.openedAt;
+        const stuck = this.consecutiveFailures >= FAILURES_BEFORE_LONG_WAIT;
+        const wait = stuck ? LONG_WAIT_MS : this.backoff;
+        console.warn(
+          `[claw] disconnected code=${ev?.code ?? "?"} reason=${JSON.stringify(ev?.reason ?? "")} ` +
+          `after ${Math.round(held / 1000)}s, failure ${this.consecutiveFailures}, reconnecting in ${wait}ms` +
+          (stuck ? " (backing off hard: the handshake keeps failing, check the Claw dashboard)" : "")
+        );
         this.ready = null;
-        setTimeout(() => this.connect(), this.backoff);
-        this.backoff = Math.min(this.backoff * 2, 30_000);
+        setTimeout(() => this.connect(), wait);
+        // Claw drops connections with 1006 roughly every 17 minutes, and the first few retries
+        // after a drop often fail too. A 30s ceiling left Huddle offline and silent while people
+        // were mid-conversation, so cap it low: this is a chat product, not a rate-limited API.
+        this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
       };
       ws.onerror = () => { /* the close handler takes care of reconnecting; never log the URL, it has the key */ };
     });
@@ -159,6 +182,8 @@ export function parseClawMessage(event: ClawEvent): InboundMessage | null {
     provider: "claw",
     groupId: event.chatId,
     fromAddress: event.from,
+    // Claw may or may not include a contact name; take it when it is there
+    fromName: event.fromName ?? event.senderName ?? event.contactName ?? event.name ?? undefined,
     text,
     providerMessageId: event.messageId,
   };

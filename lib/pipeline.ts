@@ -3,7 +3,6 @@ import { db, type Agent, type Trip } from "./supabase";
 import { loadContext } from "./agents/context";
 import { runListener } from "./agents/listener";
 import { runOrchestrator } from "./agents/orchestrator";
-import { runBudget } from "./agents/budget";
 import { runDebate, runSpecialist } from "./agents/specialist";
 import { directReply } from "./agents/reply";
 import { BUDGET, HUDDLE, isAddressedTo } from "./agents/personas";
@@ -36,6 +35,18 @@ async function handleControl(trip: Trip, text: string) {
   return false;
 }
 
+type Speaker = { key: string; name: string; role: string };
+
+/** Which agent a message addresses, if any. `except` stops an agent from calling itself. */
+function whoIsTagged(text: string, agents: Agent[], except?: string, pennyOn = true): Speaker | null {
+  const candidates: Speaker[] = [
+    { key: HUDDLE.key, name: HUDDLE.name, role: "host" },
+    ...(pennyOn ? [{ key: BUDGET.key, name: BUDGET.name, role: "budget agent" }] : []),
+    ...agents.map((a) => ({ key: a.id, name: a.persona_name, role: `${a.role} agent` })),
+  ];
+  return candidates.find((c) => c.key !== except && isAddressedTo(text, c.key === BUDGET.key ? [c.name, "budget"] : [c.name])) ?? null;
+}
+
 export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: string; plan?: string; duplicate?: boolean }> {
   const s = db();
 
@@ -48,9 +59,13 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   const { trip, isNew } = await getOrCreateTrip(msg);
 
   const { data: participant } = await s.from("participants")
-    .upsert({ trip_id: trip.id, address: msg.fromAddress, ...(msg.fromName ? { display_name: msg.fromName } : {}) },
-      { onConflict: "trip_id,address" })
+    .upsert({ trip_id: trip.id, address: msg.fromAddress }, { onConflict: "trip_id,address" })
     .select().single();
+  // A name from the provider fills a blank, but never overwrites one set in the app or from the chat
+  if (msg.fromName && !participant!.display_name) {
+    await s.from("participants").update({ display_name: msg.fromName }).eq("id", participant!.id);
+    participant!.display_name = msg.fromName;
+  }
 
   const { data: message } = await s.from("messages").insert({
     trip_id: trip.id, participant_id: participant!.id, sender_type: "human", content: msg.text,
@@ -73,44 +88,34 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   await runListener(ctx, message!, senderLabel);
   ctx = await loadContext(trip.id);
 
-  // 2. Direct tags always get a reply
-  const tagged =
-    isAddressedTo(msg.text, [HUDDLE.name]) ? { key: HUDDLE.key, name: "Huddle", role: "host" } :
-    isAddressedTo(msg.text, [BUDGET.name, "budget"]) ? { key: BUDGET.key, name: BUDGET.name, role: "budget agent" } :
-    (() => {
-      const a = ctx.agents.find((x) => isAddressedTo(msg.text, [x.persona_name]));
-      return a ? { key: a.id, name: a.persona_name, role: `${a.role} agent` } : null;
-    })();
+  // 2. Agents speak only when someone @mentions them. Nobody volunteers.
+  //    The one exception is the trip intro above, which is the "first time" message.
+  const pennyOn = ctx.trip.settings?.penny !== false;
+  const tagged = whoIsTagged(msg.text, ctx.agents, undefined, pennyOn);
   if (tagged && ctx.trip.activity_level !== "paused") {
     const answer = await directReply(ctx, tagged, msg.text);
     await postNow(ctx.trip, tagged.key, answer);
     ctx = await loadContext(trip.id);
-  }
 
-  // 3. Orchestrator decides whether to spawn child agents or start a debate
-  const plan: any = await runOrchestrator(ctx);
-  const spawned: Agent[] = plan.agents ?? [];
-  if (plan.action === "spawn_specialist" && spawned[0]) await runSpecialist(spawned[0]);
-  if (plan.action === "start_debate" && spawned.length === 2) await runDebate(spawned);
-
-  // An agent already in the chat answers a question in its area without being tagged.
-  // Without this a specialist goes mute after it introduces itself, and questions sit unanswered.
-  if (plan.action === "answer" && !tagged) {
-    const responder = ctx.agents.find((a) => a.id === plan.answer_agent_id);
-    if (responder) {
-      const answer = await directReply(
-        ctx,
-        { name: responder.persona_name, role: `${responder.role} agent` },
-        msg.text
-      );
-      await postNow(ctx.trip, responder.id, answer);
+    // 3. Agents can call each other: if the reply says "@penny", Penny answers next.
+    //    One hop only, so two agents cannot ping-pong forever.
+    const next = whoIsTagged(answer, ctx.agents, tagged.key, pennyOn);
+    if (next) {
+      const followUp = await directReply(ctx, next, `${tagged.name} asked you: ${answer}`);
+      await postNow(ctx.trip, next.key, followUp);
       ctx = await loadContext(trip.id);
     }
   }
 
-  // 4. Budget agent checks whether money needs raising
-  ctx = await loadContext(trip.id);
-  await runBudget(ctx);
+  // 4. Huddle brings in a specialist only when asked to. "@huddle find us a hotel" spawns a
+  //    stays agent, which introduces itself once and is then silent until someone @mentions it.
+  let plan: any = { action: "none" };
+  if (tagged?.key === HUDDLE.key && ctx.trip.activity_level !== "paused") {
+    plan = await runOrchestrator(ctx);
+    const spawned: Agent[] = plan.agents ?? [];
+    if (plan.action === "spawn_specialist" && spawned[0]) await runSpecialist(spawned[0]);
+    if (plan.action === "start_debate" && spawned.length === 2) await runDebate(spawned);
+  }
 
   // 5. Speak gate: posts only if the chat is quiet and cooldown allows
   await tick(trip.id);
