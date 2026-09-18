@@ -11,9 +11,12 @@ create table if not exists trips (
   activity_level text not null default 'normal',        -- quiet | normal | active | paused
   debate_mode text not null default 'full',             -- off | highlights | full
   last_agent_post_at timestamptz,
+  settings jsonb not null default '{}'::jsonb,           -- {"penny": false} turns the budget agent off
   created_at timestamptz not null default now(),
   unique (provider, provider_group_id)
 );
+-- Existing databases: add the column without touching anything else. Safe to re-run.
+alter table trips add column if not exists settings jsonb not null default '{}'::jsonb;
 
 create table if not exists participants (
   id uuid primary key default gen_random_uuid(),
@@ -86,6 +89,26 @@ create table if not exists speak_candidates (
   posted_at timestamptz
 );
 
+create table if not exists itinerary_items (
+  id uuid primary key default gen_random_uuid(),
+  trip_id uuid not null references trips(id) on delete cascade,
+  day_label text not null,                              -- "Saturday, Sep 19"
+  day_index int not null default 0,                     -- 0 = first day, for ordering
+  start_time text,                                      -- "1:00pm", free text so "morning" also works
+  title text not null,                                  -- "Land at LAX"
+  place text,                                           -- "Los Angeles International Airport"
+  notes text,                                           -- one line of why or how
+  maps_url text,
+  wiki_url text,
+  image_url text,
+  category text,                                        -- stays | food | activities | transport | nightlife
+  est_cost_per_person numeric,                          -- what this stop costs each person, 0 if free
+  sort int not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists itinerary_trip on itinerary_items (trip_id, day_index, sort);
+alter table itinerary_items enable row level security;
+
 create index if not exists messages_trip_created on messages (trip_id, created_at);
 create index if not exists candidates_trip_status on speak_candidates (trip_id, status);
 
@@ -100,3 +123,22 @@ alter table preferences      enable row level security;
 alter table decisions        enable row level security;
 alter table agents           enable row level security;
 alter table speak_candidates enable row level security;
+
+-- Dashboard additions (2026-09-18). Safe to re-run.
+-- Votes on decision options, one per person per thread.
+create table if not exists decision_votes (
+  id uuid primary key default gen_random_uuid(),
+  trip_id uuid not null references trips(id) on delete cascade,
+  decision_id uuid not null references decisions(id) on delete cascade,
+  participant_id uuid not null references participants(id) on delete cascade,
+  option_label text not null,                           -- matches decisions.options[].label
+  created_at timestamptz not null default now(),
+  unique (decision_id, participant_id)
+);
+alter table decision_votes enable row level security;
+
+-- Stop state on the itinerary so a removed stop stays visible with its reason instead of vanishing on replan.
+alter table itinerary_items add column if not exists status text not null default 'proposed';  -- locked | proposed | contested | dropped. 'proposed' means untouched: the dashboard derives the state
+alter table itinerary_items add column if not exists dropped_reason text;
+alter table itinerary_items add column if not exists dropped_by text;                            -- huddle | <agent id> | <participant id>
+alter table itinerary_items add column if not exists dropped_at timestamptz;
