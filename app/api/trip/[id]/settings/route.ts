@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
+import { requireMember } from "@/lib/auth/session";
 import { db } from "@/lib/supabase";
 
 /** Per-trip switches: whether Penny the budget agent is in the chat, and the group size every cost divides by. */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const auth = await requireMember(id);
+  if (auth instanceof Response) return auth;
   const patch = await req.json();
   const s = db();
   const { data: trip, error: readErr } = await s.from("trips").select("settings").eq("id", id).maybeSingle();

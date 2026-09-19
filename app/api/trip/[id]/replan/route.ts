@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireMember } from "@/lib/auth/session";
 import { loadContext } from "@/lib/agents/context";
 import { runSpecialist } from "@/lib/agents/specialist";
 import { buildItinerary } from "@/lib/agents/planner";
@@ -12,6 +13,8 @@ export const maxDuration = 60;
  */
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const auth = await requireMember(id);
+  if (auth instanceof Response) return auth;
   const ctx = await loadContext(id);
   if (!ctx.trip) return NextResponse.json({ error: "trip not found" }, { status: 404 });
   // Specialists refresh their options first, then the itinerary is rebuilt from the result

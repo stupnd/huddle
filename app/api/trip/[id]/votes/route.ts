@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireMember } from "@/lib/auth/session";
 import { db } from "@/lib/supabase";
 
 const MIGRATION_HINT = "voting needs the decision_votes table. run supabase/schema.sql in the Supabase SQL editor, then try again.";
@@ -6,6 +7,8 @@ const MIGRATION_HINT = "voting needs the decision_votes table. run supabase/sche
 /** Place or move one person's vote on a thread. One vote per person per thread. */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const auth = await requireMember(id);
+  if (auth instanceof Response) return auth;
   const { decisionId, participantId, optionLabel } = await req.json();
   if (!decisionId || !participantId || !optionLabel) return NextResponse.json({ error: "decisionId, participantId and optionLabel are required" }, { status: 400 });
 
@@ -22,6 +25,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 /** Take a vote back. */
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const auth = await requireMember(id);
+  if (auth instanceof Response) return auth;
   const { decisionId, participantId } = await req.json();
   const { error } = await db().from("decision_votes").delete().eq("trip_id", id).eq("decision_id", decisionId).eq("participant_id", participantId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

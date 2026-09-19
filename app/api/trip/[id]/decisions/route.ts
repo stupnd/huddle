@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireMember } from "@/lib/auth/session";
 import { db } from "@/lib/supabase";
 
 /**
@@ -7,6 +8,8 @@ import { db } from "@/lib/supabase";
  */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const auth = await requireMember(id);
+  if (auth instanceof Response) return auth;
   const { decisionId, chosen, reopen } = await req.json();
   if (!decisionId) return NextResponse.json({ error: "decisionId is required" }, { status: 400 });
   const s = db();

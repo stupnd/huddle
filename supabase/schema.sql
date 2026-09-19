@@ -118,6 +118,29 @@ create table if not exists itinerary_items (
 create index if not exists itinerary_trip on itinerary_items (trip_id, day_index, sort);
 alter table itinerary_items enable row level security;
 
+create table if not exists waitlist (
+  id uuid primary key default gen_random_uuid(),
+  email text not null unique,
+  phone text,
+  name text,
+  source text,                                          -- landing | referral | other
+  created_at timestamptz not null default now()
+);
+alter table waitlist enable row level security;
+
+-- Sign-in codes texted from Huddle's own line. Only the hash is stored; codes expire in 10 minutes.
+create table if not exists login_codes (
+  id uuid primary key default gen_random_uuid(),
+  phone text not null,
+  code_hash text not null,
+  attempts int not null default 0,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists login_codes_phone on login_codes (phone, created_at desc);
+alter table login_codes enable row level security;
+
 create index if not exists messages_trip_created on messages (trip_id, created_at);
 create index if not exists candidates_trip_status on speak_candidates (trip_id, status);
 

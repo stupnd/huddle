@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireMember } from "@/lib/auth/session";
 import { loadContext } from "@/lib/agents/context";
 import { dismissAgent, spawnSpecialist } from "@/lib/agents/orchestrator";
 import { runSpecialist } from "@/lib/agents/specialist";
@@ -19,6 +20,8 @@ const TOPIC: Record<string, string> = {
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const auth = await requireMember(id);
+  if (auth instanceof Response) return auth;
   const { role, topic, retry } = await req.json();
 
   const ctx = await loadContext(id);
@@ -46,6 +49,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 /** Send an agent home from the dashboard. */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const auth = await requireMember(id);
+  if (auth instanceof Response) return auth;
   const { agentId } = await req.json();
   if (!agentId) return NextResponse.json({ error: "agentId is required" }, { status: 400 });
   await dismissAgent(id, agentId);

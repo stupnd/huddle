@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireMember } from "@/lib/auth/session";
 import { db } from "@/lib/supabase";
 
 const STATUSES = ["locked", "proposed", "contested", "dropped"];
@@ -11,6 +12,8 @@ const MIGRATION_HINT = "stop status needs the dashboard columns. run supabase/sc
  */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const auth = await requireMember(id);
+  if (auth instanceof Response) return auth;
   const { stopId, status, reason, by } = await req.json();
   if (!stopId || !STATUSES.includes(status)) return NextResponse.json({ error: `status must be one of ${STATUSES.join(", ")}` }, { status: 400 });
 
