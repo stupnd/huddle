@@ -26,5 +26,8 @@ export async function POST(req: Request) {
   // code stays valid for a retry instead of being consumed by a server error.
   await setSessionCookie(phone);
   await s.from("login_codes").update({ used_at: new Date().toISOString() }).eq("id", row.id);
-  return NextResponse.json({ ok: true });
+
+  // Ask for a name once, if no trip has one for this number yet
+  const { data: named } = await s.from("participants").select("id").eq("address", phone).not("display_name", "is", null).limit(1);
+  return NextResponse.json({ ok: true, needsName: !named?.length });
 }
