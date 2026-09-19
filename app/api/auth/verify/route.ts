@@ -22,7 +22,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "That's not the code. Check the text and try again." }, { status: 400 });
   }
 
-  await s.from("login_codes").update({ used_at: new Date().toISOString() }).eq("id", row.id);
+  // Cookie first, then burn the code. If signing fails (e.g. SESSION_SECRET missing), the
+  // code stays valid for a retry instead of being consumed by a server error.
   await setSessionCookie(phone);
+  await s.from("login_codes").update({ used_at: new Date().toISOString() }).eq("id", row.id);
   return NextResponse.json({ ok: true });
 }
