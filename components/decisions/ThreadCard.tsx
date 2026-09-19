@@ -55,8 +55,9 @@ export function ThreadCard({ decision, highlighted }: { decision: Decision; high
 
   const vote = (option: Option) =>
     run(`vote-${decision.id}`, async () => {
-      if (myVote === option.id) return api(`/api/trip/${tripId}/votes`, "DELETE", { decisionId: decision.id, participantId: viewer });
-      return api(`/api/trip/${tripId}/votes`, "POST", { decisionId: decision.id, participantId: viewer, optionLabel: option.title });
+      // The server identifies the voter from the sign-in cookie; a guest is sent to sign in first
+      if (myVote === option.id) return api(`/api/trip/${tripId}/votes`, "DELETE", { decisionId: decision.id });
+      return api(`/api/trip/${tripId}/votes`, "POST", { decisionId: decision.id, optionLabel: option.title });
     });
 
   const resolve = (chosen: string, optionId?: string) =>

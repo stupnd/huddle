@@ -24,6 +24,8 @@ type ShellState = {
   refresh: () => void;
   /** who is looking: picked once via WhoAreYou, remembered per browser */
   setViewer: (memberId: string) => void;
+  /** true when a sign-in cookie was present; false means guest */
+  signedIn: boolean;
 
   drawerOpen: boolean;
   drawerMode: DrawerMode;
@@ -44,11 +46,13 @@ type ShellState = {
 
 const ShellContext = createContext<ShellState | null>(null);
 
-export function ShellProvider({ initial, tripId, children }: { initial: TripSnapshot; tripId: string; children: React.ReactNode }) {
+export function ShellProvider({ initial, tripId, signedIn = false, children }: { initial: TripSnapshot; tripId: string; signedIn?: boolean; children: React.ReactNode }) {
   const { snapshot: live, error: liveError, refresh } = useLiveTrip(tripId, initial);
   const [viewer, setViewer] = useLocalPref<string>(`viewer:${tripId}`, "");
   const snapshot = useMemo(
-    () => (viewer && live.members.some((m) => m.id === viewer) ? { ...live, viewerId: viewer } : live),
+    // The server-resolved identity (from the sign-in cookie) always wins over the remembered pick
+    () => (initial.viewerId ? { ...live, viewerId: initial.viewerId }
+      : viewer && live.members.some((m) => m.id === viewer) ? { ...live, viewerId: viewer } : live),
     [live, viewer],
   );
   const wide = useBreakpoint("xl");
@@ -93,6 +97,7 @@ export function ShellProvider({ initial, tripId, children }: { initial: TripSnap
       liveError,
       refresh,
       setViewer,
+      signedIn,
       drawerOpen,
       drawerMode,
       pinned,
@@ -105,7 +110,7 @@ export function ShellProvider({ initial, tripId, children }: { initial: TripSnap
       openDrawerAt,
       clearDrawerTarget,
     }),
-    [snapshot, tripId, liveError, refresh, setViewer, drawerOpen, drawerMode, pinned, target, seenAt, openDrawer, closeDrawer, toggleDrawer, setPinned, openDrawerAt, clearDrawerTarget],
+    [snapshot, tripId, liveError, refresh, setViewer, signedIn, drawerOpen, drawerMode, pinned, target, seenAt, openDrawer, closeDrawer, toggleDrawer, setPinned, openDrawerAt, clearDrawerTarget],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

@@ -47,7 +47,7 @@ const CATEGORY_ORDER: WantCategory[] = [
 ];
 
 export function CrewTab() {
-  const { snapshot, tripId, setViewer, openDrawer } = useShell();
+  const { snapshot, tripId, openDrawer } = useShell();
   const { run, busy } = useAction();
   const conflicts = useMemo(() => wantConflicts(snapshot), [snapshot]);
   const agents = useMemo(() => activeAgents(snapshot), [snapshot]);
@@ -111,7 +111,6 @@ export function CrewTab() {
               conflictCategories={conflictCategories}
               threadFor={threadFor}
               onRename={(name) => rename(m, name)}
-              onBeMe={() => setViewer(m.id)}
               onEditWant={editWant}
               onConfirmWant={confirmWant}
               onDeleteWant={deleteWant}
@@ -130,7 +129,6 @@ function MemberCard({
   conflictCategories,
   threadFor,
   onRename,
-  onBeMe,
   onEditWant,
   onConfirmWant,
   onDeleteWant,
@@ -141,7 +139,6 @@ function MemberCard({
   conflictCategories: Set<string>;
   threadFor: (category: string) => string | undefined;
   onRename: (name: string) => void;
-  onBeMe: () => void;
   onEditWant: (id: string, text: string) => void;
   onConfirmWant: (id: string) => void;
   onDeleteWant: (id: string) => void;
@@ -197,13 +194,7 @@ function MemberCard({
             {member.wants.length} wants · {member.wants.filter((w) => w.private).length} private
           </p>
         </div>
-        {isViewer ? (
-          <span className="rounded-full bg-accent-soft px-1 text-micro text-ink">this is you</span>
-        ) : (
-          <Button size="sm" variant="quiet" onClick={onBeMe}>
-            this is me
-          </Button>
-        )}
+        {isViewer && <span className="rounded-full bg-accent-soft px-1 text-micro text-ink">this is you</span>}
       </header>
 
       {grouped.length === 0 ? (

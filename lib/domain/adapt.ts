@@ -67,7 +67,9 @@ export function adaptTrip(api: TripApi): TripSnapshot {
     costLines,
     events,
     messages,
-    viewerId: members[0]?.id ?? "",
+    // No identity until the sign-in cookie says otherwise (set in the trip layout).
+    // Defaulting to the first member made every guest act as that person.
+    viewerId: "",
     loadedAt: api.loadedAt,
     capabilities: { itinerary: api.itineraryReady, votes: api.votesReady, stopStatus: api.stopStatusReady },
   };

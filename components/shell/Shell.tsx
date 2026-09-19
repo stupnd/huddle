@@ -12,9 +12,9 @@ import { TabTransition } from "./TabTransition";
  * Persistent chrome: top bar, live status (only when agents are working), three
  * primary tabs, identity pick, content, and the read-only agent drawer.
  */
-export function Shell({ initial, tripId, children }: { initial: TripSnapshot; tripId: string; children: React.ReactNode }) {
+export function Shell({ initial, tripId, signedIn, children }: { initial: TripSnapshot; tripId: string; signedIn: boolean; children: React.ReactNode }) {
   return (
-    <ShellProvider initial={initial} tripId={tripId}>
+    <ShellProvider initial={initial} tripId={tripId} signedIn={signedIn}>
       <div className="flex min-h-dvh w-full">
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />

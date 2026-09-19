@@ -3,6 +3,7 @@ import { Shell } from "@/components/shell/Shell";
 import { adaptTrip } from "@/lib/domain/adapt";
 import { readTrip } from "@/lib/trip/read";
 import { TripUnavailable } from "@/components/shell/TripUnavailable";
+import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -18,8 +19,13 @@ export default async function TripLayout({ children, params }: { children: React
     if (result.status === 404) notFound();
     return <TripUnavailable message={result.error} />;
   }
+  // Identity comes from the sign-in cookie, matched to a participant by phone number.
+  // A guest gets no viewerId, sees a sign-in prompt, and is redirected on the first write.
+  const session = await getSession();
+  const me = session ? result.data.participants.find((p) => p.address === session.phone) : undefined;
+  const initial = { ...adaptTrip(result.data), viewerId: me?.id ?? "" };
   return (
-    <Shell initial={adaptTrip(result.data)} tripId={id}>
+    <Shell initial={initial} tripId={id} signedIn={Boolean(session)}>
       {children}
     </Shell>
   );
