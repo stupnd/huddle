@@ -12,7 +12,7 @@
  * Deploy:       any always-on Node host (Railway, Fly.io, Render background worker)
  */
 import { claw, DM_TEST_MODE, parseClawMessage } from "../lib/messaging/claw";
-import { handleInbound } from "../lib/pipeline";
+import { handleInbound, parseTripTitle, startTrip } from "../lib/pipeline";
 import { db } from "../lib/supabase";
 import { loadContext } from "../lib/agents/context";
 import { runMonitor } from "../lib/agents/monitor";
@@ -37,18 +37,29 @@ function enqueue(key: string, job: () => Promise<unknown>) {
   return next;
 }
 
-/** DMs: "start a trip with +1 613 555 0101, +1 613 555 0102" creates a new group with Huddle in it. */
-async function handleDirectMessage(from: string, text: string) {
-  const numbers = [...new Set((text.match(PHONE) ?? []).map(toE164))].filter((n) => n !== from);
+const YES = /^\s*(yes|yeah|yep|yup|sure|do it|please|ok(ay)?|confirm)\b/i;
+const NO = /^\s*(no|nah|nope|cancel|never ?mind)\b/i;
+const CONFIRM_TTL_MS = 10 * 60_000;
 
-  if (!/start|trip|plan/i.test(text) || numbers.length === 0) {
-    await claw.send({
-      to: from,
-      text: "hey! i'm huddle 🧭 to start planning, text me: start a trip with +1 613 555 0101, +1 613 555 0102 (your friends' numbers). i'll make a group chat with all of you.",
-    });
-    return;
+/** Awaiting "yes"/"no" to "a trip already exists for you, start a new one?", keyed by the DM sender. */
+type PendingNewTrip = { numbers: string[]; title: string | null; matchedTripId: string; expiresAt: number };
+const pendingNewTrip = new Map<string, PendingNewTrip>();
+
+/** Same address set (order-independent) as an already-active claw trip, if any. */
+async function findTripForMembers(members: string[]): Promise<{ id: string; title: string | null } | null> {
+  const s = db();
+  const want = new Set(members.map((m) => m.toLowerCase()));
+  const { data: trips } = await s.from("trips").select("id, title").eq("provider", "claw").eq("status", "active");
+  for (const t of trips ?? []) {
+    const { data: parts } = await s.from("participants").select("address").eq("trip_id", t.id);
+    const have = new Set((parts ?? []).map((p) => p.address.toLowerCase()));
+    if (have.size === want.size && [...want].every((a) => have.has(a))) return t;
   }
+  return null;
+}
 
+/** Registers everyone, creates the iMessage group, and starts the trip. */
+async function createTripGroup(from: string, numbers: string[], title: string | null) {
   for (const n of [from, ...numbers]) {
     const r = await claw.registerNumber(n);
     if (!r.ok) console.warn(`[claw] could not register ${n.slice(0, 5)}…`, r.body?.error ?? "");
@@ -58,7 +69,8 @@ async function handleDirectMessage(from: string, text: string) {
   const result = await claw.send({
     to: members,
     text: "hey everyone! i'm huddle 🧭 i'll read this chat to help plan your trip and mostly stay quiet. " +
-      "i'll bring in specialist agents when you need them. text \"huddle chill\" or \"huddle pause\" anytime.",
+      "i'll bring in specialist agents when you need them. text \"huddle chill\" or \"huddle pause\" anytime, or " +
+      "\"huddle plan trip <id> instead\" to switch to a different trip in this chat.",
   });
 
   if (!result.ok || !result.chatId) {
@@ -66,15 +78,56 @@ async function handleDirectMessage(from: string, text: string) {
     return;
   }
 
+  // Confirming "start a new one" for a group Claw/iMessage resolves back to an existing chatId
+  // (same participant set) still needs its own trip: startTrip archives what's active there first.
   const s = db();
-  const { data: trip } = await s.from("trips")
-    .upsert({ provider: "claw", provider_group_id: result.chatId }, { onConflict: "provider,provider_group_id" })
-    .select().single();
-  await s.from("participants").upsert(members.map((address) => ({ trip_id: trip!.id, address })), { onConflict: "trip_id,address" });
-  await s.from("messages").insert({ trip_id: trip!.id, sender_type: "agent", persona: "huddle", content: "group created" });
+  const trip = await startTrip("claw", result.chatId, title);
+  await s.from("participants").upsert(members.map((address) => ({ trip_id: trip.id, address })), { onConflict: "trip_id,address" });
+  await s.from("messages").insert({ trip_id: trip.id, sender_type: "agent", persona: "huddle", content: "group created" });
 
-  await claw.send({ chatId: result.chatId, text: `see where the plan stands anytime: ${APP_URL}/trip/${trip!.id}` });
-  console.log(`[huddle] trip ${trip!.id} created for chat ${result.chatId}`);
+  await claw.send({ chatId: result.chatId, text: `see where the plan stands anytime: ${APP_URL}/trip/${trip.id}` });
+  console.log(`[huddle] trip ${trip.id} created for chat ${result.chatId}${title ? ` ("${title}")` : ""}`);
+}
+
+/** DMs: "start a trip with +1 613 555 0101, +1 613 555 0102" creates a new group with Huddle in it. */
+async function handleDirectMessage(from: string, text: string) {
+  const pending = pendingNewTrip.get(from);
+  if (pending && Date.now() < pending.expiresAt) {
+    pendingNewTrip.delete(from);
+    if (YES.test(text)) return createTripGroup(from, pending.numbers, pending.title);
+    if (NO.test(text)) {
+      await claw.send({ to: from, text: `no worries — sticking with the existing one: ${APP_URL}/trip/${pending.matchedTripId}` });
+      return;
+    }
+    // anything else: fall through and re-evaluate this message as a fresh command
+  }
+
+  const numbers = [...new Set((text.match(PHONE) ?? []).map(toE164))].filter((n) => n !== from);
+
+  if (!/start|trip|plan/i.test(text) || numbers.length === 0) {
+    await claw.send({
+      to: from,
+      text: "hey! i'm huddle 🧭 to start planning, text me: start a trip with +1 613 555 0101, +1 613 555 0102 (your friends' numbers). " +
+        "add \"named ...\" to give it a title. i'll make a group chat with all of you.",
+    });
+    return;
+  }
+
+  const title = parseTripTitle(text);
+  const members = [from, ...numbers];
+  const existing = await findTripForMembers(members);
+  if (existing) {
+    pendingNewTrip.set(from, { numbers, title, matchedTripId: existing.id, expiresAt: Date.now() + CONFIRM_TTL_MS });
+    await claw.send({
+      to: from,
+      text: `a trip already exists for you and this group${existing.title ? ` ("${existing.title}")` : ""}: ${APP_URL}/trip/${existing.id}\n` +
+        `want to start a new one instead? reply yes to confirm — both stay, and you can switch back anytime with ` +
+        `"huddle plan trip ${existing.id.slice(0, 8)} instead" in the group chat.`,
+    });
+    return;
+  }
+
+  await createTripGroup(from, numbers, title);
 }
 
 async function main() {

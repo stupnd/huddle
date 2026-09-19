@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 const s = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
 async function main() {
   const gid = process.argv[2];
-  const { data: trip } = await s.from("trips").select("*").eq("provider_group_id", gid).single();
+  const { data: trip } = await s.from("trips").select("*").eq("provider_group_id", gid).order("created_at", { ascending: false }).limit(1).single();
   console.log("=== TRIP ===");
   console.log(`id=${trip!.id}\ntitle=${trip!.title}\nactivity_level=${trip!.activity_level}  debate_mode=${trip!.debate_mode}\nlast_agent_post_at=${trip!.last_agent_post_at}`);
 

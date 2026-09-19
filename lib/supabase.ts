@@ -30,6 +30,7 @@ export type Trip = {
   provider: string;
   provider_group_id: string;
   title: string | null;
+  status: "active" | "archived";
   activity_level: "quiet" | "normal" | "active" | "paused";
   debate_mode: "off" | "highlights" | "full";
   last_agent_post_at: string | null;

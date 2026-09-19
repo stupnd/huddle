@@ -14,26 +14,92 @@ const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 async function getOrCreateTrip(msg: InboundMessage) {
   const s = db();
   const { data: existing } = await s.from("trips").select("*")
-    .eq("provider", msg.provider).eq("provider_group_id", msg.groupId).maybeSingle();
+    .eq("provider", msg.provider).eq("provider_group_id", msg.groupId).eq("status", "active").maybeSingle();
   if (existing) return { trip: existing as Trip, isNew: false };
-  const { data } = await s.from("trips").insert({ provider: msg.provider, provider_group_id: msg.groupId }).select().single();
-  return { trip: data as Trip, isNew: true };
+  const trip = await startTrip(msg.provider, msg.groupId);
+  return { trip, isNew: true };
 }
 
-async function handleControl(trip: Trip, text: string) {
+/**
+ * Archives whatever active trip a group chat has (a no-op if none) and starts a fresh one in
+ * its place. Used for the first-ever message to a group, and by the DM "start a trip" flow
+ * when the confirmed group reuses a chatId iMessage/Claw resolved back to an existing chat.
+ */
+export async function startTrip(provider: string, groupId: string, title: string | null = null): Promise<Trip> {
+  const s = db();
+  await s.from("trips").update({ status: "archived" })
+    .eq("provider", provider).eq("provider_group_id", groupId).eq("status", "active");
+  const { data } = await s.from("trips").insert({ provider, provider_group_id: groupId, title }).select().single();
+  return data as Trip;
+}
+
+/** "start a trip ... named X" / "... called X" — the words after named/called become the title. */
+export function parseTripTitle(text: string): string | null {
+  const quoted = text.match(/(?:named|called)\s+"([^"]+)"/i);
+  if (quoted) return quoted[1].trim();
+  const bare = text.match(/(?:named|called)\s+(.+)$/i);
+  return bare ? bare[1].trim().replace(/["'.!]+$/, "") || null : null;
+}
+
+/**
+ * Makes a different trip in this same group chat the active one ("huddle plan trip <id> instead").
+ * A chat can end up with more than one trip when a confirmed "start a new one" DM reuses the same
+ * chatId (same participant set) — only one can be active at a time, but neither is ever deleted, so
+ * this lets the group swap back and forth. `idFragment` only needs to be an unambiguous prefix of
+ * the id from the trip's own dashboard link.
+ */
+export async function switchTrip(
+  provider: string,
+  groupId: string,
+  idFragment: string
+): Promise<{ trip: Trip; alreadyActive: boolean } | "not_found" | "ambiguous"> {
+  const s = db();
+  const frag = idFragment.trim().toLowerCase();
+  const { data: trips } = await s.from("trips").select("*").eq("provider", provider).eq("provider_group_id", groupId);
+  const matches = (trips ?? []).filter((t) => t.id.toLowerCase().startsWith(frag)) as Trip[];
+  if (matches.length === 0) return "not_found";
+  if (matches.length > 1) return "ambiguous";
+  const target = matches[0];
+  if (target.status === "active") return { trip: target, alreadyActive: true };
+  await s.from("trips").update({ status: "archived" }).eq("provider", provider).eq("provider_group_id", groupId).eq("status", "active");
+  const { data: updated } = await s.from("trips").update({ status: "active" }).eq("id", target.id).select().single();
+  return { trip: updated as Trip, alreadyActive: false };
+}
+
+async function handleControl(trip: Trip, text: string): Promise<{ handled: boolean; tripId?: string }> {
   const t = text.toLowerCase();
-  if (!/\bhuddle\b/.test(t)) return false;
+  if (!/\bhuddle\b/.test(t)) return { handled: false };
   const set = async (activity_level: string, reply: string) => {
     await db().from("trips").update({ activity_level }).eq("id", trip.id);
     await postNow({ ...trip, activity_level: activity_level as Trip["activity_level"] }, HUDDLE.key, reply);
-    return true;
+    return { handled: true };
   };
+
+  const planTrip = t.match(/plan trip(?:\s*id)?[:\s]+([0-9a-f-]{4,})\s*instead/i);
+  if (planTrip) {
+    const result = await switchTrip(trip.provider, trip.provider_group_id, planTrip[1]);
+    if (result === "not_found") {
+      await postNow(trip, HUDDLE.key, `couldn't find a trip starting with "${planTrip[1]}" in this chat.`);
+      return { handled: true };
+    }
+    if (result === "ambiguous") {
+      await postNow(trip, HUDDLE.key, `a few trips in this chat start with "${planTrip[1]}" — use a few more characters from the id.`);
+      return { handled: true };
+    }
+    if (result.alreadyActive) {
+      await postNow(result.trip, HUDDLE.key, `that's already the one we're planning.`);
+      return { handled: true, tripId: result.trip.id };
+    }
+    await postNow(result.trip, HUDDLE.key, `switched — picking up${result.trip.title ? ` "${result.trip.title}"` : ""} where we left off.`);
+    return { handled: true, tripId: result.trip.id };
+  }
+
   if (/\b(pause|stop|shh|shut up)\b/.test(t)) return set("paused", "got it, going quiet. text \"huddle resume\" when you want me back");
   if (/\bresume\b/.test(t)) return set("normal", "i'm back");
   if (/\bchill\b/.test(t)) return set("quiet", "ok, i'll only jump in when it really matters");
   if (/\bmore active\b/.test(t)) return set("active", "ok, i'll speak up more");
-  if (/\bjust pick\b/.test(t)) return false; // handled as a direct question
-  return false;
+  if (/\bjust pick\b/.test(t)) return { handled: false }; // handled as a direct question
+  return { handled: false };
 }
 
 type Speaker = { key: string; name: string; role: string };
@@ -80,7 +146,8 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
       `see where the plan stands: ${APP_URL}/trip/${trip.id}`);
   }
 
-  if (await handleControl(trip, msg.text)) return { tripId: trip.id };
+  const control = await handleControl(trip, msg.text);
+  if (control.handled) return { tripId: control.tripId ?? trip.id };
 
   let ctx = await loadContext(trip.id);
   const senderLabel = participant!.display_name ?? msg.fromAddress;

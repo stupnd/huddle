@@ -8,15 +8,24 @@ create table if not exists trips (
   provider text not null default 'simulator',          -- simulator | claw | sendblue
   provider_group_id text not null,                      -- group_id from the messaging provider
   title text,
+  status text not null default 'active',                -- active | archived: a group chat moves on to a new trip via "huddle new trip"
   activity_level text not null default 'normal',        -- quiet | normal | active | paused
   debate_mode text not null default 'full',             -- off | highlights | full
   last_agent_post_at timestamptz,
   settings jsonb not null default '{}'::jsonb,           -- {"penny": false} turns budget off; monitor findings live under settings.monitor
-  created_at timestamptz not null default now(),
-  unique (provider, provider_group_id)
+  created_at timestamptz not null default now()
 );
--- Existing databases: add the column without touching anything else. Safe to re-run.
+-- Existing databases: add the columns without touching anything else. Safe to re-run.
 alter table trips add column if not exists settings jsonb not null default '{}'::jsonb;
+alter table trips add column if not exists status text not null default 'active';
+
+-- Only one active trip per group chat at a time. A group chat can't be told apart by its
+-- provider_group_id alone once it has planned more than one trip (iMessage reuses the same
+-- thread for the same participant set), so trips.status lets it move on: the old trip is
+-- archived and a new active one takes over the same provider_group_id. Safe to re-run.
+alter table trips drop constraint if exists trips_provider_provider_group_id_key;
+drop index if exists trips_provider_provider_group_id_key;
+create unique index if not exists trips_active_group_idx on trips (provider, provider_group_id) where status = 'active';
 
 create table if not exists participants (
   id uuid primary key default gen_random_uuid(),

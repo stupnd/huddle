@@ -18,7 +18,7 @@ const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 /** Columns the app actually reads or writes, per table. */
 const TABLES: Record<string, string[]> = {
-  trips: ["id", "provider", "provider_group_id", "title", "activity_level", "debate_mode", "last_agent_post_at", "created_at"],
+  trips: ["id", "provider", "provider_group_id", "title", "status", "activity_level", "debate_mode", "last_agent_post_at", "created_at"],
   participants: ["id", "trip_id", "address", "display_name", "created_at"],
   messages: ["id", "trip_id", "participant_id", "sender_type", "persona", "content", "provider_message_id", "created_at"],
   preferences: ["id", "trip_id", "participant_id", "category", "value", "visibility", "source_message_id", "confirmed", "updated_at"],
