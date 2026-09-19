@@ -20,7 +20,7 @@ type Props = {
 };
 
 /**
- * Real street map (Leaflet + OpenStreetMap / CARTO tiles — no API key).
+ * Real street map (Leaflet + OpenStreetMap tiles, no key). CARTO's basemaps now require a paid key.
  * Numbered pins, route lines with travel times, jump tour between stops.
  */
 export function TripMapCanvas({ stops, near, focusId, onSelectStop, onLegs, className }: Props) {
@@ -94,9 +94,8 @@ export function TripMapCanvas({ stops, near, focusId, onSelectStop, onLegs, clas
       >
         {/* Real street tiles — free, no API key (not Google) */}
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://carto.com/">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-          subdomains="abcd"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={20}
         />
         <ZoomControl position="bottomright" />

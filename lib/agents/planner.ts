@@ -70,6 +70,8 @@ Reply with JSON only:
         maps_url: g?.mapsUrl || (it.place ? mapsUrl(it.place, near) : null),
         wiki_url: info.wiki,
         image_url: g?.photoUrl || info.image,
+        lat: g?.lat ?? null,
+        lng: g?.lng ?? null,
         category: CATEGORIES.includes(it.category ?? "") ? it.category : null,
         est_cost_per_person: typeof it.est_cost_per_person === "number" && it.est_cost_per_person >= 0 ? Math.round(it.est_cost_per_person) : null,
         sort: i,

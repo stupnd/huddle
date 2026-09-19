@@ -124,10 +124,14 @@ create table if not exists itinerary_items (
   image_url text,
   category text,                                        -- stays | food | activities | transport | nightlife
   est_cost_per_person numeric,                          -- what this stop costs each person, 0 if free
+  lat double precision,                                 -- from Google Places at plan time; the map uses these
+  lng double precision,
   sort int not null default 0,
   created_at timestamptz not null default now()
 );
 create index if not exists itinerary_trip on itinerary_items (trip_id, day_index, sort);
+alter table itinerary_items add column if not exists lat double precision;
+alter table itinerary_items add column if not exists lng double precision;
 alter table itinerary_items enable row level security;
 
 create table if not exists waitlist (

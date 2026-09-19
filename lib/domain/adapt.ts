@@ -612,7 +612,7 @@ function adaptStops(api: TripApi, decisions: Decision[], members: Member[], mess
       time: parseClock(row.start_time),
       timeLabel: (row.start_time ?? "").toLowerCase(),
       title: stripEmoji(row.title),
-      place: { name: row.place ?? row.title, neighborhood: neighborhoodOf(row.place, row.title), photoUrl: row.image_url },
+      place: { name: row.place ?? row.title, neighborhood: neighborhoodOf(row.place, row.title), photoUrl: row.image_url, lat: row.lat ?? undefined, lng: row.lng ?? undefined },
       links: { maps: row.maps_url ?? undefined, wiki: row.wiki_url ?? undefined },
       category: STOP_CATEGORY[row.category ?? ""] ?? "activities",
       reasoning: stripEmoji(row.notes ?? ""),

@@ -70,5 +70,5 @@ export type ItineraryItem = {
   id: string; trip_id: string; day_label: string; day_index: number; start_time: string | null;
   title: string; place: string | null; notes: string | null;
   maps_url: string | null; wiki_url: string | null; image_url: string | null;
-  category: string | null; est_cost_per_person: number | null; sort: number;
+  category: string | null; est_cost_per_person: number | null; lat: number | null; lng: number | null; sort: number;
 };
