@@ -8,6 +8,7 @@ import { directReply } from "./agents/reply";
 import { runMonitor, verifyDraft } from "./agents/monitor";
 import { BUDGET, HUDDLE, isAddressedTo } from "./agents/personas";
 import { postNow, tick } from "./agents/spokesperson";
+import { buildItinerary } from "./agents/planner";
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 
@@ -164,6 +165,19 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   //    The one exception is the trip intro above, which is the "first time" message.
   const pennyOn = ctx.trip.settings?.penny !== false;
   const tagged = whoIsTagged(msg.text, ctx.agents, undefined, pennyOn);
+
+  // "@huddle plan saturday" builds the real itinerary rather than a made-up one in prose.
+  // The planner posts its own two-line summary with a link, so no direct reply on top.
+  const wantsPlan = tagged?.key === HUDDLE.key && /\b(plan|itinerary|schedule|timeline)\b/i.test(msg.text);
+  if (wantsPlan && ctx.trip.activity_level !== "paused") {
+    const { items } = await buildItinerary(trip.id);
+    if (items.length) {
+      await tick(trip.id, { force: true });
+      return { tripId: trip.id, plan: "itinerary" };
+    }
+    // Nothing settled enough to plan yet: fall through and let Huddle say so
+  }
+
   if (tagged && ctx.trip.activity_level !== "paused") {
     const draft = await directReply(ctx, tagged, msg.text);
     const answer = await verifyDraft(ctx, tagged, draft);

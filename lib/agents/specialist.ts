@@ -1,6 +1,7 @@
 import { db, type Agent } from "../supabase";
 import { ask, askJSON, MODELS } from "./claude";
 import { describe, loadContext } from "./context";
+import { describePlaces, describeRoutes, getRoutes, googleEnabled, searchPlaces, type Place } from "../tools/google";
 import { verifyDraft } from "./monitor";
 import { VOICE } from "./voice";
 
@@ -16,22 +17,70 @@ Never reveal anyone's private budget number; say things like "a couple of you ar
  * was a wasted bubble: the name prefix on every agent message already says who they are.
  * The trigger stays "intro" so an agent joining still skips the cooldown.
  */
+/**
+ * What each role looks up before it speaks. This is the difference between agents: the stays
+ * agent asks Places for hotels, the transport agent asks Directions for travel times, and each
+ * gets back facts the others do not have. Without a key, everything falls back to web search.
+ */
+async function gatherFacts(agent: Agent, context: string): Promise<{ facts: string; places: Place[] }> {
+  if (!googleEnabled()) return { facts: "", places: [] };
+
+  // A cheap call to turn the trip state into the two or three concrete lookups this role needs
+  const plan = await askJSON<{ searches?: string[]; routes?: { from: string; to: string }[]; near?: string }>(
+    {
+      model: MODELS.listener,
+      maxTokens: 400,
+      system: `You turn a trip's state into lookups for a ${agent.role} specialist working on: ${agent.task}.
+Reply with JSON only. searches: up to 3 Google Places text queries, specific and local ("cheap hostel near Santa Monica Pier", "brunch on Abbot Kinney Blvd"). Use the group's stated area, budget, and taste.
+routes: up to 3 {from, to} pairs for travel times, only if this role is transport or getting around matters (airport to hotel, hotel to the main activity). Use full place names.
+near: the city or neighbourhood to anchor searches.
+{"searches": [], "routes": [], "near": ""}`,
+      prompt: context,
+    },
+    { searches: [], routes: [], near: "" }
+  );
+
+  const places = (await Promise.all((plan.searches ?? []).slice(0, 3).map((q) => searchPlaces(q, { near: plan.near, max: 5 })))).flat();
+  const routeLines = await Promise.all(
+    (plan.routes ?? []).slice(0, 3).map(async (r) => describeRoutes(r.from, r.to, await getRoutes(r.from, r.to)))
+  );
+
+  const facts = [
+    places.length ? `REAL PLACES (from Google, with ratings and price level):\n${describePlaces(places)}` : "",
+    routeLines.length ? `REAL TRAVEL TIMES (from Google Directions):\n${routeLines.join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
+  return { facts, places };
+}
+
 export async function runSpecialist(agent: Agent) {
   const ctx = await loadContext(agent.trip_id);
   const s = db();
+  const context = describe(ctx);
+  const { facts, places } = await gatherFacts(agent, context);
+  const grounded = facts.length > 0;
 
-  const research = await askJSON<{ options: { label: string; details: string; est_cost_per_person?: number }[]; message: string }>(
+  const research = await askJSON<{ options: { label: string; details: string; est_cost_per_person?: number; maps_url?: string; photo_url?: string }[]; message: string }>(
     {
       model: MODELS.agent,
-      webSearch: true,
+      webSearch: !grounded,
       maxTokens: 2000,
       system: `You are ${agent.persona_name}, the ${agent.role} specialist in a friend group chat, working on: ${agent.task}.
-Use web search to find 2 or 3 real options that fit everyone's preferences. ${STYLE}
-Reply with JSON only: {"options": [{"label": "", "details": "", "est_cost_per_person": 0}], "message": "your top two picks with the specific detail that makes each one right for this group, for example a price, a walk time, or a distance"}`,
-      prompt: describe(ctx),
+${grounded
+  ? "Pick 2 or 3 options ONLY from the REAL PLACES and REAL TRAVEL TIMES below. Quote their actual ratings, price levels, addresses and times. Never invent a place that is not listed."
+  : "Use web search to find 2 or 3 real options that fit everyone's preferences."}
+${STYLE}
+Reply with JSON only: {"options": [{"label": "exact place name", "details": "", "est_cost_per_person": 0}], "message": "your top two picks with the specific detail that makes each one right for this group, for example a price, a walk time, or a distance"}`,
+      prompt: grounded ? `${context}\n\n${facts}` : context,
     },
     { options: [], message: "" }
   );
+
+  // Attach the real links and photos to options that match a looked-up place
+  for (const o of research.options) {
+    const hit = places.find((p) => p.name.toLowerCase() === o.label.toLowerCase()) ??
+      places.find((p) => o.label.toLowerCase().includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(o.label.toLowerCase()));
+    if (hit) { o.maps_url = hit.mapsUrl; if (hit.photoUrl) o.photo_url = hit.photoUrl; }
+  }
 
   if (agent.decision_id && research.options.length) {
     await s.from("decisions").update({ options: research.options, status: "proposed" }).eq("id", agent.decision_id);

@@ -58,8 +58,13 @@ export async function spawnSpecialist(ctx: TripContext, role: string, topic: str
   const s = db();
   const normalized = normalizeRole(role);
   if (ctx.agents.some((a) => a.role === normalized)) return null;
-  const { data: everSpawned } = await s.from("agents").select("persona_name").eq("trip_id", ctx.trip.id);
-  const taken = (everSpawned ?? []).map((a) => a.persona_name);
+  // Active names are off limits; departed ones are recyclable, oldest departure first
+  const { data: everSpawned } = await s.from("agents").select("persona_name,status,created_at").eq("trip_id", ctx.trip.id).order("created_at");
+  const rows = everSpawned ?? [];
+  const taken = [
+    ...rows.filter((a) => a.status === "active").map((a) => a.persona_name),
+    ...rows.filter((a) => a.status !== "active").map((a) => a.persona_name),
+  ];
   let decision = findDecision(ctx.decisions, topic);
   if (!decision) {
     const { data } = await s.from("decisions").insert({ trip_id: ctx.trip.id, topic, status: "open" }).select().single();
@@ -105,8 +110,12 @@ export async function runOrchestrator(ctx: TripContext, depth = 0): Promise<Plan
   const s = db();
   // Includes agents that already left. Reusing a retired name reads as one agent
   // saying goodbye and immediately coming back as somebody else.
-  const { data: everSpawned } = await s.from("agents").select("persona_name").eq("trip_id", ctx.trip.id);
-  const taken = (everSpawned ?? []).map((a) => a.persona_name);
+  const { data: everSpawned } = await s.from("agents").select("persona_name,status,created_at").eq("trip_id", ctx.trip.id).order("created_at");
+  const rows0 = everSpawned ?? [];
+  const taken = [
+    ...rows0.filter((a) => a.status === "active").map((a) => a.persona_name),
+    ...rows0.filter((a) => a.status !== "active").map((a) => a.persona_name),
+  ];
 
   if (plan.action === "retire_agents" && plan.retire_agent_ids?.length) {
     // Retiring two agents used to queue two identical goodbyes back to back, which reads as spam.

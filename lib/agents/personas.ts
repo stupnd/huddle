@@ -10,8 +10,15 @@ const ROLE_EMOJI: Record<string, string> = {
   stays: "🏨", flights: "✈️", transport: "🚆", food: "🍜", activities: "🎟️", nightlife: "🪩", weather: "🌦️",
 };
 
+/**
+ * Picks a name not in `taken`. `taken` should list active agents first, then the most recently
+ * departed, so that when the pool is exhausted the recycled name is the one gone longest.
+ * Never invents "Agent12": that reads as a bug to the group.
+ */
 export function pickChildPersona(taken: string[], role: string) {
-  const name = CHILD_NAMES.find((n) => !taken.includes(n)) ?? `Agent${taken.length + 1}`;
+  const fresh = CHILD_NAMES.find((n) => !taken.includes(n));
+  const recycled = [...CHILD_NAMES].sort((a, b) => taken.lastIndexOf(b) - taken.lastIndexOf(a)).pop();
+  const name = fresh ?? recycled ?? CHILD_NAMES[0];
   return { name, emoji: ROLE_EMOJI[role] ?? "🤖" };
 }
 

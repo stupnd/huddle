@@ -56,7 +56,9 @@ Rules:
 - Track group decisions: a new topic being discussed is "open"; a clear group agreement is "decided".
 - If the sender introduces themselves ("it's Priya"), return sender_display_name.
 - If the message names the trip (destination, dates), return trip_title like "Montreal, reading week".
-- Only record a decision when the group is choosing between concrete things. Skip vague topics like "destination" once the destination is already settled.
+- A decision is a choice the group has to make between concrete alternatives: LA vs Bangkok, hostel vs hotel, which night for the concert. Record those.
+- A question, a request ("give me a plan for saturday"), a topic someone raised, or a wish is NOT a decision. Never create decisions like "Saturday itinerary", "what to do", "day-by-day plan", or "directions from LAX". Those are requests; the planner handles them.
+- Do not create a decision for something already decided or already open under a similar name. When unsure, return no decision. An extra decision row is worse than a missing one.
 
 Reply with JSON only, using exactly these keys. Use "value", never "preference". Use "topic", never "details".
 {"trip_title": "Montreal, reading week",

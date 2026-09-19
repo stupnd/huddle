@@ -2,6 +2,7 @@ import { db, type ItineraryItem } from "../supabase";
 import { askJSON, MODELS } from "./claude";
 import { describe, loadContext } from "./context";
 import { lookupPlace, mapsUrl } from "../places";
+import { googleEnabled, searchPlaces } from "../tools/google";
 
 type PlannedItem = {
   day_label: string; day_index: number; start_time?: string; title: string;
@@ -55,6 +56,9 @@ Reply with JSON only:
   const rows = await Promise.all(
     plan.items.map(async (it, i) => {
       const info = it.place_query ? await lookupPlace(it.place_query) : { image: null, wiki: null, caption: null };
+      // Google knows the actual venue (hotel, restaurant, bar) where Wikipedia only knows landmarks.
+      // Prefer its photo and its maps link when it finds a confident match.
+      const g = googleEnabled() && it.place ? (await searchPlaces(it.place, { near, max: 1 }))[0] : undefined;
       return {
         trip_id: tripId,
         day_label: it.day_label,
@@ -63,9 +67,9 @@ Reply with JSON only:
         title: it.title,
         place: it.place ?? null,
         notes: it.notes ?? null,
-        maps_url: it.place ? mapsUrl(it.place, near) : null,
+        maps_url: g?.mapsUrl || (it.place ? mapsUrl(it.place, near) : null),
         wiki_url: info.wiki,
-        image_url: info.image,
+        image_url: g?.photoUrl || info.image,
         category: CATEGORIES.includes(it.category ?? "") ? it.category : null,
         est_cost_per_person: typeof it.est_cost_per_person === "number" && it.est_cost_per_person >= 0 ? Math.round(it.est_cost_per_person) : null,
         sort: i,
@@ -87,8 +91,10 @@ Reply with JSON only:
   }
 
   if (plan.summary) {
+    const appUrl = process.env.APP_URL ?? "http://localhost:3000";
     await s.from("speak_candidates").insert({
-      trip_id: tripId, speaker: "huddle", trigger: "decision_ready", urgency: 2, content: plan.summary, seq: 0,
+      trip_id: tripId, speaker: "huddle", trigger: "decision_ready", urgency: 2, seq: 0,
+      content: `${plan.summary}\n${appUrl}/trip/${tripId}/plan`,
     });
   }
 
