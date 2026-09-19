@@ -1,0 +1,5 @@
+# Railway reads this so the worker starts correctly with no dashboard setup.
+[deploy]
+startCommand = "npm run worker:prod"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
