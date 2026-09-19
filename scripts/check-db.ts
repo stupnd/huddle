@@ -25,6 +25,7 @@ const TABLES: Record<string, string[]> = {
   decisions: ["id", "trip_id", "topic", "status", "options", "chosen", "updated_at", "created_at"],
   agents: ["id", "trip_id", "kind", "role", "persona_name", "emoji", "task", "champions", "decision_id", "status", "created_at"],
   speak_candidates: ["id", "trip_id", "speaker", "trigger", "urgency", "content", "seq", "status", "reason", "created_at", "posted_at"],
+  dm_events: ["id", "provider_message_id", "created_at"],
 };
 
 const ok = (s: string) => `  \x1b[32mPASS\x1b[0m  ${s}`;

@@ -47,6 +47,18 @@ create table if not exists messages (
   created_at timestamptz not null default now()
 );
 
+-- Dedupes inbound DMs to Huddle (as opposed to group messages, which dedupe via
+-- messages.provider_message_id). A DM has no trip to attach a messages row to until one is
+-- found or created, so it needs its own claim table. Also the actual fix for two worker
+-- processes connected to the same Claw account at once (e.g. a local run overlapping a Railway
+-- deploy): the unique constraint means only one process's insert wins per messageId, so only
+-- one of them ever proceeds to act on a given DM.
+create table if not exists dm_events (
+  id uuid primary key default gen_random_uuid(),
+  provider_message_id text unique not null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists preferences (
   id uuid primary key default gen_random_uuid(),
   trip_id uuid not null references trips(id) on delete cascade,
@@ -155,6 +167,7 @@ alter table preferences      enable row level security;
 alter table decisions        enable row level security;
 alter table agents           enable row level security;
 alter table speak_candidates enable row level security;
+alter table dm_events        enable row level security;
 
 -- Dashboard additions (2026-09-18). Safe to re-run.
 -- Votes on decision options, one per person per thread.

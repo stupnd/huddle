@@ -49,9 +49,17 @@ const pendingNewTrip = new Map<string, PendingNewTrip>();
 async function findTripForMembers(members: string[]): Promise<{ id: string; title: string | null } | null> {
   const s = db();
   const want = new Set(members.map((m) => m.toLowerCase()));
-  const { data: trips } = await s.from("trips").select("id, title").eq("provider", "claw").eq("status", "active");
+  const { data: trips, error } = await s.from("trips").select("id, title").eq("provider", "claw").eq("status", "active");
+  if (error) {
+    // A missing `status` column (schema.sql not re-run against this database) fails silently
+    // otherwise: trips comes back undefined, the loop below never runs, and the duplicate
+    // check just looks like it found nothing instead of erroring loudly.
+    console.error("[huddle] findTripForMembers query failed — has supabase/schema.sql been re-run?", error.message);
+    return null;
+  }
   for (const t of trips ?? []) {
-    const { data: parts } = await s.from("participants").select("address").eq("trip_id", t.id);
+    const { data: parts, error: partsError } = await s.from("participants").select("address").eq("trip_id", t.id);
+    if (partsError) { console.error(`[huddle] could not load participants for trip ${t.id}`, partsError.message); continue; }
     const have = new Set((parts ?? []).map((p) => p.address.toLowerCase()));
     if (have.size === want.size && [...want].every((a) => have.has(a))) return t;
   }
@@ -86,11 +94,35 @@ async function createTripGroup(from: string, numbers: string[], title: string | 
   await s.from("messages").insert({ trip_id: trip.id, sender_type: "agent", persona: "huddle", content: "group created" });
 
   await claw.send({ chatId: result.chatId, text: `see where the plan stands anytime: ${APP_URL}/trip/${trip.id}` });
+  await claw.send({
+    chatId: result.chatId,
+    text: "one more thing — want me to only jump in when you say \"huddle\" (call me), or should i read along and " +
+      "speak up on my own when it seems useful (chime in)? reply \"call me\" or \"chime in\" anytime.",
+  });
   console.log(`[huddle] trip ${trip.id} created for chat ${result.chatId}${title ? ` ("${title}")` : ""}`);
 }
 
+/**
+ * Claims a DM by its provider message id so only one connected process ever acts on it — the
+ * unique constraint on dm_events.provider_message_id makes this atomic even across processes
+ * (e.g. a local worker overlapping Stuti's Railway deployment). Group messages get the same
+ * protection for free via messages.provider_message_id; DMs need their own claim since there's
+ * no trip to attach a messages row to until one is found or created.
+ */
+async function claimDm(messageId: string | undefined): Promise<boolean> {
+  if (!messageId) return true; // no id to dedupe on — proceed, as before
+  const { error } = await db().from("dm_events").insert({ provider_message_id: messageId });
+  if (error) {
+    console.log(`[huddle] duplicate DM delivery ignored (messageId=${messageId}) — another process already claimed it`);
+    return false;
+  }
+  return true;
+}
+
 /** DMs: "start a trip with +1 613 555 0101, +1 613 555 0102" creates a new group with Huddle in it. */
-async function handleDirectMessage(from: string, text: string) {
+async function handleDirectMessage(from: string, text: string, messageId?: string) {
+  if (!(await claimDm(messageId))) return;
+
   const pending = pendingNewTrip.get(from);
   if (pending && Date.now() < pending.expiresAt) {
     pendingNewTrip.delete(from);
@@ -144,7 +176,7 @@ async function main() {
           if (!r.duplicate) console.log(`[huddle] processed group message, orchestrator: ${r.plan ?? "none"}`);
         });
       } else if (!DM_TEST_MODE && !event.isGroup && event.from && event.text && !event.replay) {
-        enqueue(`dm:${event.from}`, () => handleDirectMessage(event.from, event.text));
+        enqueue(`dm:${event.from}`, () => handleDirectMessage(event.from, event.text, event.messageId));
       }
     } else if (event.type === "error") {
       console.warn("[claw] error event", event.code, event.message);

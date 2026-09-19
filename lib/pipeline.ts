@@ -42,6 +42,16 @@ export function parseTripTitle(text: string): string | null {
   return bare ? bare[1].trim().replace(/["'.!]+$/, "") || null : null;
 }
 
+const CALL_OUT_PHRASES = /\b(call me|call out|@?huddle only|mentions? only|tag me)\b/i;
+const CHIME_IN_PHRASES = /\b(chime in|listen in|jump in|whenever|on your own|read along|proactive(?:ly)?)\b/i;
+
+/** Answer to the "call me or chime in?" onboarding question, if this message looks like one. */
+export function parseMentionModeAnswer(text: string): "call_out" | "listen_in" | null {
+  if (CALL_OUT_PHRASES.test(text)) return "call_out";
+  if (CHIME_IN_PHRASES.test(text)) return "listen_in";
+  return null;
+}
+
 /**
  * Makes a different trip in this same group chat the active one ("huddle plan trip <id> instead").
  * A chat can end up with more than one trip when a confirmed "start a new one" DM reuses the same
@@ -135,26 +145,51 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
     participant!.display_name = msg.fromName;
   }
 
-  const { data: message } = await s.from("messages").insert({
+  const { data: message, error: messageError } = await s.from("messages").insert({
     trip_id: trip.id, participant_id: participant!.id, sender_type: "human", content: msg.text,
     provider_message_id: msg.providerMessageId ?? null,
   }).select().single();
+  // A unique provider_message_id violation here means two deliveries of the same message raced
+  // past the "seen" check above (e.g. two worker processes briefly both connected) — the other
+  // delivery already recorded it, so this one is a duplicate, not a failure.
+  if (!message) {
+    console.warn("[pipeline] message insert returned nothing, treating as a duplicate", messageError?.message);
+    return { duplicate: true };
+  }
 
   if (isNew) {
     await postNow(trip, HUDDLE.key,
       `hey! i'm huddle 🧭 i read this chat to help plan your trip and mostly stay quiet. ` +
       `i'll bring in specialist agents when you need them. text "huddle chill" or "huddle pause" anytime. ` +
       `see where the plan stands: ${APP_URL}/trip/${trip.id}`);
+    await postNow(trip, HUDDLE.key,
+      `one more thing — want me to only jump in when you say "huddle" (call me), or should i read along and speak up ` +
+      `on my own when it seems useful (chime in)? reply "call me" or "chime in" anytime.`);
   }
 
   const control = await handleControl(trip, msg.text);
   if (control.handled) return { tripId: control.tripId ?? trip.id };
 
+  if (!trip.settings?.mention_mode) {
+    const mode = parseMentionModeAnswer(msg.text);
+    if (mode) {
+      await s.from("trips").update({ settings: { ...trip.settings, mention_mode: mode } }).eq("id", trip.id);
+      await postNow(
+        trip,
+        HUDDLE.key,
+        mode === "call_out"
+          ? `got it — i'll only jump in when you say "huddle."`
+          : `got it — i'll read along and speak up when it's useful (still won't talk much).`
+      );
+      return { tripId: trip.id };
+    }
+  }
+
   let ctx = await loadContext(trip.id);
   const senderLabel = participant!.display_name ?? msg.fromAddress;
 
   // 1. Listener always runs, silently
-  await runListener(ctx, message!, senderLabel);
+  await runListener(ctx, message, senderLabel);
   ctx = await loadContext(trip.id);
 
   // 1b. On long chats, scan recent agent posts for drift against prefs/decisions

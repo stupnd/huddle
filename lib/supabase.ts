@@ -39,6 +39,7 @@ export type Trip = {
     hero_image?: string | null;
     hero_wiki?: string | null;
     hero_caption?: string | null;
+    mention_mode?: "call_out" | "listen_in";
     monitor?: {
       last_checked_at?: string;
       issues?: { claim: string; contradicts: string; severity: 1 | 2 | 3; at: string; speaker?: string }[];
