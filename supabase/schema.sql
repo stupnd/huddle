@@ -11,7 +11,7 @@ create table if not exists trips (
   activity_level text not null default 'normal',        -- quiet | normal | active | paused
   debate_mode text not null default 'full',             -- off | highlights | full
   last_agent_post_at timestamptz,
-  settings jsonb not null default '{}'::jsonb,           -- {"penny": false} turns the budget agent off
+  settings jsonb not null default '{}'::jsonb,           -- {"penny": false} turns budget off; monitor findings live under settings.monitor
   created_at timestamptz not null default now(),
   unique (provider, provider_group_id)
 );

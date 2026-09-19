@@ -4,15 +4,13 @@ import { ShellProvider } from "./ShellProvider";
 import { TopBar } from "./TopBar";
 import { StatusStrip } from "./StatusStrip";
 import { TabNav } from "./TabNav";
+import { WhoAreYou } from "./WhoAreYou";
 import { AgentDrawer } from "./AgentDrawer";
 import { TabTransition } from "./TabTransition";
 
 /**
- * The persistent shell around every tab: top bar, live status strip, primary
- * tabs, the content area, and the agent drawer beside or over it.
- *
- * Layout: a flex row. The content column flexes; the docked drawer is a fixed
- * width column on xl and up. Below xl the drawer is a sheet and takes no space.
+ * Persistent chrome: top bar, live status (only when agents are working), three
+ * primary tabs, identity pick, content, and the read-only agent drawer.
  */
 export function Shell({ initial, tripId, children }: { initial: TripSnapshot; tripId: string; children: React.ReactNode }) {
   return (
@@ -22,6 +20,9 @@ export function Shell({ initial, tripId, children }: { initial: TripSnapshot; tr
           <TopBar />
           <StatusStrip />
           <TabNav />
+          <div className="pt-1.5">
+            <WhoAreYou />
+          </div>
           <main id="content" className="mx-auto w-full max-w-(--container-shell) flex-1 px-2 py-3 md:px-4 md:py-4">
             <TabTransition>{children}</TabTransition>
           </main>

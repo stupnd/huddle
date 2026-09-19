@@ -5,6 +5,7 @@ import { runListener } from "./agents/listener";
 import { runOrchestrator } from "./agents/orchestrator";
 import { runDebate, runSpecialist } from "./agents/specialist";
 import { directReply } from "./agents/reply";
+import { runMonitor, verifyDraft } from "./agents/monitor";
 import { BUDGET, HUDDLE, isAddressedTo } from "./agents/personas";
 import { postNow, tick } from "./agents/spokesperson";
 
@@ -88,12 +89,17 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   await runListener(ctx, message!, senderLabel);
   ctx = await loadContext(trip.id);
 
+  // 1b. On long chats, scan recent agent posts for drift against prefs/decisions
+  await runMonitor(ctx);
+  ctx = await loadContext(trip.id);
+
   // 2. Agents speak only when someone @mentions them. Nobody volunteers.
   //    The one exception is the trip intro above, which is the "first time" message.
   const pennyOn = ctx.trip.settings?.penny !== false;
   const tagged = whoIsTagged(msg.text, ctx.agents, undefined, pennyOn);
   if (tagged && ctx.trip.activity_level !== "paused") {
-    const answer = await directReply(ctx, tagged, msg.text);
+    const draft = await directReply(ctx, tagged, msg.text);
+    const answer = await verifyDraft(ctx, tagged, draft);
     await postNow(ctx.trip, tagged.key, answer);
     ctx = await loadContext(trip.id);
 
@@ -101,7 +107,8 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
     //    One hop only, so two agents cannot ping-pong forever.
     const next = whoIsTagged(answer, ctx.agents, tagged.key, pennyOn);
     if (next) {
-      const followUp = await directReply(ctx, next, `${tagged.name} asked you: ${answer}`);
+      const followDraft = await directReply(ctx, next, `${tagged.name} asked you: ${answer}`);
+      const followUp = await verifyDraft(ctx, next, followDraft);
       await postNow(ctx.trip, next.key, followUp);
       ctx = await loadContext(trip.id);
     }

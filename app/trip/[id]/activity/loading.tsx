@@ -1,4 +1,5 @@
 import { TabPlaceholder } from "@/components/shell/TabPlaceholder";
-export default function Loading() {
-  return <TabPlaceholder tab="activity" />;
+
+export default function ActivityLoading() {
+  return <TabPlaceholder tab="plan" />;
 }

@@ -99,6 +99,13 @@ export function describe(ctx: TripContext, { includePrivate = false } = {}) {
 
   const agents = ctx.agents.map((a) => `- ${a.persona_name} (${a.role}): ${a.task}${a.champions ? `, champions "${a.champions}"` : ""}`).join("\n");
 
+  // Open monitor findings keep speakers from repeating a hallucination after a long chat.
+  const findings = (ctx.trip.settings?.monitor?.issues ?? [])
+    .filter((i) => i.severity >= 2)
+    .slice(0, 5)
+    .map((i) => `- do not repeat: "${i.claim}" (ground truth: ${i.contradicts})`)
+    .join("\n");
+
   return `TRIP: ${ctx.trip.title ?? "untitled trip"}
 PEOPLE AND PREFERENCES:
 ${prefs}
@@ -108,7 +115,7 @@ ${decisions || "- none yet"}
 
 CHILD AGENTS IN CHAT:
 ${agents || "- none"}
-
+${findings ? `\nACCURACY WATCH (monitor):\n${findings}\n` : ""}
 RECENT GROUP CHAT:
 ${transcript}`;
 }

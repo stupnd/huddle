@@ -33,7 +33,16 @@ export type Trip = {
   activity_level: "quiet" | "normal" | "active" | "paused";
   debate_mode: "off" | "highlights" | "full";
   last_agent_post_at: string | null;
-  settings?: { penny?: boolean; hero_image?: string | null; hero_wiki?: string | null; hero_caption?: string | null };
+  settings?: {
+    penny?: boolean;
+    hero_image?: string | null;
+    hero_wiki?: string | null;
+    hero_caption?: string | null;
+    monitor?: {
+      last_checked_at?: string;
+      issues?: { claim: string; contradicts: string; severity: 1 | 2 | 3; at: string; speaker?: string }[];
+    };
+  };
   created_at: string;
 };
 

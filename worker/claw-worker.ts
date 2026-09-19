@@ -14,6 +14,8 @@
 import { claw, DM_TEST_MODE, parseClawMessage } from "../lib/messaging/claw";
 import { handleInbound } from "../lib/pipeline";
 import { db } from "../lib/supabase";
+import { loadContext } from "../lib/agents/context";
+import { runMonitor } from "../lib/agents/monitor";
 import { tick } from "../lib/agents/spokesperson";
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
@@ -109,6 +111,23 @@ async function main() {
       });
     }
   }, 15_000);
+
+  // Long-chat monitor: every 2 minutes, scan active trips whose transcript window is full
+  setInterval(async () => {
+    const { data: trips } = await db()
+      .from("trips")
+      .select("id")
+      .neq("activity_level", "paused")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    for (const t of trips ?? []) {
+      enqueue(`monitor:${t.id}`, async () => {
+        const ctx = await loadContext(t.id);
+        const r = await runMonitor(ctx);
+        if (r.scanned && r.issues) console.log(`[monitor] trip ${t.id}: ${r.issues} issue(s)`);
+      });
+    }
+  }, 120_000);
 
   if (DM_TEST_MODE) {
     console.log("[huddle] DM_TEST_MODE is on: your 1:1 chat with Huddle runs as a one-person group. Turn it off for real groups.");

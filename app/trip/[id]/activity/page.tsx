@@ -1,5 +1,7 @@
-import { ActivityTab } from "@/components/activity/ActivityTab";
+import { redirect } from "next/navigation";
 
-export default function ActivityPage() {
-  return <ActivityTab />;
+/** Activity demoted into the agent drawer — keep old links working. */
+export default async function ActivityPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  redirect(`/trip/${id}/plan`);
 }

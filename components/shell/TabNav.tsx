@@ -10,18 +10,15 @@ import { cn } from "@/lib/utils";
 import { useShell } from "./ShellProvider";
 
 /**
- * Primary tabs. URL routed (/trip/[id]/<tab>), so every tab is deep linkable.
- * Keyboard: 1 to 5 jump straight to a tab from anywhere on the page unless focus is
- * in a text field; left and right arrows move between tabs when one is focused.
- * The active pill is a shared layout element so it glides between tabs.
+ * Primary tabs. Three jobs only: the plan, what still needs a vote, and who's
+ * on the trip. URL routed so each is deep linkable. Keyboard 1–3 jumps tabs;
+ * arrows move between them when the nav is focused.
  */
 
 export const TABS = [
   { slug: "plan", label: "plan" },
-  { slug: "decisions", label: "decisions" },
-  { slug: "crew", label: "crew" },
-  { slug: "money", label: "money" },
-  { slug: "activity", label: "activity" },
+  { slug: "decisions", label: "decide" },
+  { slug: "crew", label: "us" },
 ] as const;
 
 export type TabSlug = (typeof TABS)[number]["slug"];
@@ -34,7 +31,6 @@ export function TabNav() {
   const active = TABS.find((t) => pathname.startsWith(`/trip/${tripId}/${t.slug}`))?.slug ?? "plan";
   const needsYou = needsYouCount(snapshot);
 
-  // digit shortcuts, global
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -49,7 +45,6 @@ export function TabNav() {
     return () => window.removeEventListener("keydown", onKey);
   }, [router, tripId]);
 
-  // arrow keys inside the nav
   const onNavKey = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
     const links = Array.from(listRef.current?.querySelectorAll<HTMLAnchorElement>("a[data-tab]") ?? []);
@@ -76,7 +71,7 @@ export function TabNav() {
               data-tab={tab.slug}
               aria-current={isActive ? "page" : undefined}
               className={cn(
-                "group relative flex h-4 shrink-0 items-center gap-1 rounded-full px-2 text-body font-medium outline-offset-0",
+                "group relative flex h-4 shrink-0 items-center gap-0.5 rounded-full px-2 text-body font-medium outline-offset-0",
                 "transition-colors duration-(--duration-fast)",
                 isActive ? "text-accent-ink" : "text-ink-2 hover:text-ink",
               )}

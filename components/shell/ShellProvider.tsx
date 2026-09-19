@@ -22,7 +22,7 @@ type ShellState = {
   liveError: string | null;
   /** re-read the trip now instead of waiting for the next poll */
   refresh: () => void;
-  /** who is looking: picked on the crew tab, remembered per viewer */
+  /** who is looking: picked once via WhoAreYou, remembered per browser */
   setViewer: (memberId: string) => void;
 
   drawerOpen: boolean;

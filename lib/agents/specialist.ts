@@ -1,6 +1,7 @@
 import { db, type Agent } from "../supabase";
 import { ask, askJSON, MODELS } from "./claude";
 import { describe, loadContext } from "./context";
+import { verifyDraft } from "./monitor";
 import { VOICE } from "./voice";
 
 const STYLE = `${VOICE}
@@ -36,8 +37,15 @@ Reply with JSON only: {"options": [{"label": "", "details": "", "est_cost_per_pe
     await s.from("decisions").update({ options: research.options, status: "proposed" }).eq("id", agent.decision_id);
   }
   if (research.message) {
+    // Re-load so options just written are in ground truth for the monitor
+    const fresh = await loadContext(agent.trip_id);
+    const message = await verifyDraft(
+      fresh,
+      { name: agent.persona_name, role: `${agent.role} agent` },
+      research.message
+    );
     await s.from("speak_candidates").insert({
-      trip_id: agent.trip_id, speaker: agent.id, trigger: "intro", urgency: 2, content: research.message, seq: 0,
+      trip_id: agent.trip_id, speaker: agent.id, trigger: "intro", urgency: 2, content: message, seq: 0,
     });
   }
 }
@@ -53,7 +61,7 @@ export async function runDebate(agents: Agent[], rounds = 2) {
   for (let r = 0; r < rounds; r++) {
     for (const agent of agents) {
       const soFar = lines.map((l) => `${l.agent.persona_name}: ${l.text}`).join("\n");
-      const text = await ask({
+      const draft = await ask({
         model: MODELS.agent,
         // Enough room for a short answer. The line cap in formatFor keeps it short in the chat;
         // a tight token cap here just produced sentences cut off mid-word.
@@ -63,6 +71,7 @@ ${r === 0 ? "Open with your single strongest concrete point. Do not introduce yo
 Be playful and a little competitive, but fair. ${STYLE}`,
         prompt: `${describe(ctx)}\n\nDEBATE SO FAR:\n${soFar || "(you go first)"}`,
       });
+      const text = await verifyDraft(ctx, { name: agent.persona_name, role: `${agent.role} agent` }, draft);
       lines.push({ agent, text });
     }
   }

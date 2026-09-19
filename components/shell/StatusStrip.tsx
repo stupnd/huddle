@@ -5,8 +5,6 @@ import { X } from "lucide-react";
 import type { Agent } from "@/lib/domain/types";
 import { workingAgents } from "@/lib/domain/select";
 import { duration } from "@/lib/design/tokens";
-import { timeAgo } from "@/lib/format";
-import { useNow } from "@/lib/hooks/useNow";
 import { useBreakpoint } from "@/lib/hooks/useBreakpoint";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { Button } from "@/components/ui/button";
@@ -14,14 +12,11 @@ import { cn } from "@/lib/utils";
 import { useShell } from "./ShellProvider";
 
 /**
- * Live status strip: one fixed-height line under the top bar saying what the agents
- * are doing right now.
+ * Live status strip — only when agents are actually working. Quiet trips stay
+ * quiet; the "all quiet" chrome was noise for an iMessage companion.
  *
- * Concurrency: with several agents working at once the strip never changes height.
- * On md and up each agent gets an equal, truncating column. Below md the strip
- * cycles through them one at a time with a crossfade and a small counter.
- *
- * Dismissing hides the strip until the set of activities changes.
+ * Several agents: equal columns on md+, one-at-a-time cycle below. Dismiss hides
+ * until the activity set changes.
  */
 export function StatusStrip() {
   const { snapshot, openDrawerAt, openDrawer } = useShell();
@@ -30,10 +25,7 @@ export function StatusStrip() {
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
   const dismissed = dismissedFor === signature;
 
-  const lastEvent = snapshot.events[snapshot.events.length - 1];
-  const now = useNow();
-
-  if (dismissed) return null;
+  if (working.length === 0 || dismissed) return null;
 
   return (
     <div
@@ -42,19 +34,7 @@ export function StatusStrip() {
       className="mx-auto w-full max-w-(--container-shell) px-2 md:px-4"
     >
       <div className="flex h-(--height-strip) items-center gap-1 rounded-full border border-line bg-surface-1 pr-0.5 pl-1.5">
-        {working.length === 0 ? (
-          <p className="min-w-0 flex-1 truncate text-body-sm text-ink-2">
-            <span className="mr-1 inline-block size-1 rounded-full bg-ink-3 align-middle" aria-hidden />
-            all quiet
-            {lastEvent && (
-              <span className="text-ink-3">
-                {" "}· last move {timeAgo(lastEvent.at, now)}
-              </span>
-            )}
-          </p>
-        ) : (
-          <Activities agents={working} onTap={(a) => openDrawerAt(latestMessageFor(snapshot.messages, a.id))} onMore={openDrawer} />
-        )}
+        <Activities agents={working} onTap={(a) => openDrawerAt(latestMessageFor(snapshot.messages, a.id))} onMore={openDrawer} />
         <Button variant="quiet" size="icon-sm" aria-label="dismiss status" onClick={() => setDismissedFor(signature)}>
           <X />
         </Button>

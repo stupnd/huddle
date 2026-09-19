@@ -1,4 +1,5 @@
 import { TabPlaceholder } from "@/components/shell/TabPlaceholder";
-export default function Loading() {
-  return <TabPlaceholder tab="money" />;
+
+export default function MoneyLoading() {
+  return <TabPlaceholder tab="plan" />;
 }

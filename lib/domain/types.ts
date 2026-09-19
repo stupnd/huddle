@@ -28,7 +28,7 @@ export type Trip = {
   endDate: ISODate | null;
   hero?: { photoUrl: string; caption: string | null; wikiUrl: string | null };
   currency: "USD" | "EUR" | "GBP" | "JPY";
-  /** the single source of truth for per-person math. editable in one click on the money tab */
+  /** the single source of truth for per-person math. editable from the plan glance */
   groupSize: number;
   memberIds: ID[];
   /** when the plan was last derived from preferences and agent output */
