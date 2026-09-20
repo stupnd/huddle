@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+# Real group chats are private: sessions stay local, and trained artifacts are rebuilt from them.
+sessions/*
+!sessions/.gitkeep
+models/*
+!models/.gitkeep
