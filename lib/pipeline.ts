@@ -6,6 +6,8 @@ import { runOrchestrator } from "./agents/orchestrator";
 import { runDebate, runSpecialist } from "./agents/specialist";
 import { directReply } from "./agents/reply";
 import { runMonitor, verifyDraft } from "./agents/monitor";
+import { runChimeIn } from "./agents/chimein";
+import { runStuckCheck } from "./agents/stuck";
 import { BUDGET, HUDDLE, isAddressedTo } from "./agents/personas";
 import { postNow, tick } from "./agents/spokesperson";
 import { buildItinerary } from "./agents/planner";
@@ -196,6 +198,11 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   await runMonitor(ctx);
   ctx = await loadContext(trip.id);
 
+  // 1c. Decisions nobody's assigned an agent to: Huddle judges urgency and nudges in chat
+  // instead of just sitting in the dashboard's "needs you" bucket unnoticed.
+  await runStuckCheck(ctx);
+  ctx = await loadContext(trip.id);
+
   // 2. Agents speak only when someone @mentions them. Nobody volunteers.
   //    The one exception is the trip intro above, which is the "first time" message.
   const pennyOn = ctx.trip.settings?.penny !== false;
@@ -228,6 +235,9 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
       await postNow(ctx.trip, next.key, followUp);
       ctx = await loadContext(trip.id);
     }
+  } else if (ctx.trip.settings?.mention_mode === "listen_in") {
+    // 2b. Nobody tagged Huddle, but this group asked it to read along and judge for itself.
+    await runChimeIn(ctx);
   }
 
   // 4. Huddle brings in a specialist only when asked to. "@huddle find us a hotel" spawns a

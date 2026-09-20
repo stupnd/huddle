@@ -18,7 +18,7 @@ import { ThreadCard } from "./ThreadCard";
  * merged threads carry a note. `?thread=` opens and highlights one thread.
  */
 const SECTIONS: { key: DecisionStatus; title: string; blurb: string; open: boolean }[] = [
-  { key: "needs_you", title: "needs you", blurb: "nobody is on these. assign an agent and they come back with options.", open: true },
+  { key: "needs_you", title: "needs you", blurb: "nobody is on these yet. assign an agent, or huddle will nudge the chat if one gets time-sensitive.", open: true },
   { key: "options_ready", title: "options ready", blurb: "vote, then settle. the winner goes on the plan at the next replan.", open: true },
   { key: "debating", title: "agents debating", blurb: "two agents disagree. read both, pick one.", open: false },
   { key: "resolved", title: "resolved", blurb: "settled. reopen if the group changes its mind.", open: false },

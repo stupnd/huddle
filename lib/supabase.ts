@@ -40,6 +40,7 @@ export type Trip = {
     hero_wiki?: string | null;
     hero_caption?: string | null;
     mention_mode?: "call_out" | "listen_in";
+    stuck_nudges?: Record<string, string>; // decision id -> last nudged at, so "stuck" doesn't re-ask every message
     monitor?: {
       last_checked_at?: string;
       issues?: { claim: string; contradicts: string; severity: 1 | 2 | 3; at: string; speaker?: string }[];
@@ -60,6 +61,7 @@ export type Preference = {
 export type Decision = {
   id: string; trip_id: string; topic: string; status: "open" | "debating" | "proposed" | "decided";
   options: { label: string; details?: string; est_cost_per_person?: number }[]; chosen: string | null;
+  created_at: string; updated_at: string;
 };
 export type Agent = {
   id: string; trip_id: string; kind: string; role: string; persona_name: string; emoji: string;
