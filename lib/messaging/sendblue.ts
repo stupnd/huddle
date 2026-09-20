@@ -12,6 +12,8 @@ function headers() {
 
 export const sendblueAdapter: MessagingAdapter = {
   name: "sendblue",
+  // Sendblue's documented send-group-message has no reply-to field, so replyToMessageId is ignored
+  // here and the reply lands as an ordinary group message.
   async sendToGroup(groupId, text) {
     const res = await fetch(`${API}/send-group-message`, {
       method: "POST",
@@ -25,6 +27,7 @@ export const sendblueAdapter: MessagingAdapter = {
     if (!res.ok) {
       throw new Error(`Sendblue send failed: ${res.status} ${await res.text()}`);
     }
+    return {};
   },
 };
 

@@ -7,6 +7,6 @@ import type { MessagingAdapter } from "./types";
 export const simulatorAdapter: MessagingAdapter = {
   name: "simulator",
   async sendToGroup() {
-    return;
+    return {};
   },
 };

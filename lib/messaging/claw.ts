@@ -98,7 +98,7 @@ class ClawClient {
     return this.ready;
   }
 
-  async send(payload: { to?: string | string[]; chatId?: string; text: string }): Promise<SendResult> {
+  async send(payload: { to?: string | string[]; chatId?: string; text: string; replyToMessageId?: string }): Promise<SendResult> {
     await this.connect();
     const id = `huddle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const frame = {
@@ -106,6 +106,7 @@ class ClawClient {
       id,
       ...(payload.chatId ? { chatId: payload.chatId } : { to: payload.to }),
       parts: [{ type: "text", value: payload.text }],
+      ...(payload.replyToMessageId ? { replyTo: { messageId: payload.replyToMessageId } } : {}),
     };
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -149,11 +150,13 @@ const DM_PREFIX = "dm:";
 
 export const clawAdapter: MessagingAdapter = {
   name: "claw",
-  async sendToGroup(chatId, text) {
-    const r = chatId.startsWith(DM_PREFIX)
-      ? await claw.send({ to: chatId.slice(DM_PREFIX.length), text })
-      : await claw.send({ chatId, text });
+  async sendToGroup(chatId, text, opts) {
+    const target = chatId.startsWith(DM_PREFIX) ? { to: chatId.slice(DM_PREFIX.length) } : { chatId };
+    let r = await claw.send({ ...target, text, replyToMessageId: opts?.replyToMessageId });
+    // A threaded reply Claw refuses (the original bubble is too old or unknown) should still arrive, just unthreaded.
+    if (!r.ok && opts?.replyToMessageId) r = await claw.send({ ...target, text });
     if (!r.ok) throw new Error(`Claw send failed: ${r.error ?? r.errorCode ?? r.status}`);
+    return { messageId: r.messageId };
   },
 };
 
@@ -174,6 +177,7 @@ export function parseClawMessage(event: ClawEvent): InboundMessage | null {
       fromAddress: event.from,
       text,
       providerMessageId: event.messageId,
+      replyToMessageId: event.replyTo?.messageId,
     };
   }
 
@@ -186,5 +190,6 @@ export function parseClawMessage(event: ClawEvent): InboundMessage | null {
     fromName: event.fromName ?? event.senderName ?? event.contactName ?? event.name ?? undefined,
     text,
     providerMessageId: event.messageId,
+    replyToMessageId: event.replyTo?.messageId,
   };
 }
