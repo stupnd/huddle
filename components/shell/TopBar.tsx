@@ -1,5 +1,6 @@
 "use client";
-import { MessagesSquare, RefreshCw, Send, Sparkles } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, MessagesSquare, RefreshCw, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AvatarStack } from "@/components/crew/MemberAvatar";
@@ -16,7 +17,7 @@ import { ThemeToggle } from "./ThemeToggle";
  * the drawer is chrome, not content.
  */
 export function TopBar() {
-  const { snapshot, drawerOpen, drawerMode, toggleDrawer, drawerSeenAt } = useShell();
+  const { snapshot, drawerOpen, drawerMode, toggleDrawer, drawerSeenAt, signedIn } = useShell();
   const { trip, members } = snapshot;
   const action = primaryAction(snapshot);
   const unseen = unseenMessageCount(snapshot, drawerSeenAt);
@@ -27,6 +28,10 @@ export function TopBar() {
     <header className="mx-auto w-full max-w-(--container-shell) px-2 pt-3 pb-2 md:px-4 md:pt-5">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between md:gap-4">
         <div className="min-w-0">
+          <Link href={signedIn ? "/trips" : "/"} className="mb-1 inline-flex items-center gap-0.5 text-body-sm text-ink-3 underline-offset-2 hover:text-ink hover:underline">
+            <ArrowLeft className="size-2" aria-hidden />
+            {signedIn ? "your trips" : "huddle"}
+          </Link>
           <p className="mb-1 text-body-sm text-ink-2">
             <span className="text-ink">{trip.destination.toLowerCase() || "destination open"}</span>
             {trip.region && <span className="text-ink-3"> · {trip.region}</span>}
