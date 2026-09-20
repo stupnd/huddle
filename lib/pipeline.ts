@@ -7,7 +7,8 @@ import { runDebate, runSpecialist } from "./agents/specialist";
 import { directReply } from "./agents/reply";
 import { runMonitor, verifyDraft } from "./agents/monitor";
 import { runChimeIn } from "./agents/chimein";
-import { runStuckCheck } from "./agents/stuck";
+import { answerDigestItems, postDigestNow, runDigest } from "./agents/digest";
+import { WHATS_LEFT } from "./agents/digest-state";
 import { BUDGET, HUDDLE, isAddressedTo } from "./agents/personas";
 import { postNow, tick } from "./agents/spokesperson";
 import { enqueuePlan } from "./jobs";
@@ -198,9 +199,9 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   await runMonitor(ctx);
   ctx = await loadContext(trip.id);
 
-  // 1c. Decisions nobody's assigned an agent to: Huddle judges urgency and nudges in chat
-  // instead of just sitting in the dashboard's "needs you" bucket unnoticed.
-  await runStuckCheck(ctx);
+  // 1c. What's still open goes into chat as one short numbered list, rarely, instead of a nudge per
+  // decision. The speak gate below decides when it actually posts.
+  await runDigest(ctx);
   ctx = await loadContext(trip.id);
 
   // 2. Agents speak only when someone @mentions them. Nobody volunteers.
@@ -218,6 +219,12 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
     return { tripId: trip.id, plan: "itinerary" };
   }
 
+  // "@huddle what's left?" gets the numbered list of open decisions, threaded under the question
+  if (tagged?.key === HUDDLE.key && WHATS_LEFT.test(msg.text) && ctx.trip.activity_level !== "paused") {
+    await postDigestNow(ctx, msg.providerMessageId);
+    return { tripId: trip.id, plan: "digest" };
+  }
+
   if (tagged && ctx.trip.activity_level !== "paused") {
     const draft = await directReply(ctx, tagged, msg.text);
     const answer = await verifyDraft(ctx, tagged, draft);
@@ -233,9 +240,13 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
       await postNow(ctx.trip, next.key, followUp);
       ctx = await loadContext(trip.id);
     }
-  } else if (ctx.trip.settings?.mention_mode === "listen_in") {
-    // 2b. Nobody tagged Huddle, but this group asked it to read along and judge for itself.
-    await runChimeIn(ctx);
+  } else {
+    // 2b. Someone may be answering an item on the open-decisions list: confirm it (or ask for a
+    // clearer answer) right under their message, and stay out of the way of anything else.
+    const answered = ctx.trip.activity_level !== "paused"
+      && await answerDigestItems(ctx, message, { text: msg.text, providerMessageId: msg.providerMessageId, replyToMessageId: msg.replyToMessageId }, senderLabel);
+    // 2c. Nobody tagged Huddle, but this group asked it to read along and judge for itself.
+    if (!answered && ctx.trip.settings?.mention_mode === "listen_in") await runChimeIn(ctx);
   }
 
   // 4. Huddle brings in a specialist only when asked to. "@huddle find us a hotel" spawns a

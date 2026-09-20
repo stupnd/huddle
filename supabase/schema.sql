@@ -100,7 +100,7 @@ create table if not exists speak_candidates (
   id uuid primary key default gen_random_uuid(),
   trip_id uuid not null references trips(id) on delete cascade,
   speaker text not null,                                -- huddle | budget | <agent id>
-  trigger text not null,                                -- direct_tag | conflict | decision_ready | stuck | debate | intro | signoff | time_sensitive
+  trigger text not null,                                -- direct_tag | conflict | decision_ready | stuck | digest | debate | intro | signoff | time_sensitive
   urgency int not null default 1,                       -- 1 low, 2 medium, 3 high
   content text not null,
   seq int not null default 0,                           -- ordering within a batch (debates)

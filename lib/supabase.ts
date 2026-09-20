@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import type { DigestState } from "./agents/digest-state";
 
 let admin: SupabaseClient | null = null;
 
@@ -40,7 +41,7 @@ export type Trip = {
     hero_wiki?: string | null;
     hero_caption?: string | null;
     mention_mode?: "call_out" | "listen_in";
-    stuck_nudges?: Record<string, string>; // decision id -> last nudged at, so "stuck" doesn't re-ask every message
+    digest?: DigestState; // the numbered open-decisions list, so a later answer can be matched to an item
     monitor?: {
       last_checked_at?: string;
       issues?: { claim: string; contradicts: string; severity: 1 | 2 | 3; at: string; speaker?: string }[];

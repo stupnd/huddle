@@ -1,5 +1,6 @@
-import { adapterFor } from "../messaging";
+import { adapterFor, type SendOptions } from "../messaging";
 import { db, type Agent, type Trip } from "../supabase";
+import { markDigestPosted } from "./digest-state";
 import { BUDGET, HUDDLE, prefix } from "./personas";
 
 const LULL = Number(process.env.LULL_SECONDS ?? 90) * 1000;
@@ -43,17 +44,24 @@ export function formatFor(speaker: string, content: string, agents: Agent[]) {
   return a ? `${prefix(a.emoji, a.persona_name, a.role)}: ${text}` : text;
 }
 
-/** Sends one agent message right away (direct replies, intros, control confirmations). */
-export async function postNow(trip: Trip, speaker: string, content: string) {
+/**
+ * Sends one agent message right away (direct replies, intros, control confirmations).
+ * Pass replyToMessageId to thread it under someone's message where the provider supports that.
+ * Returns the provider's id for the bubble, so a later reply to it can be recognized.
+ */
+export async function postNow(trip: Trip, speaker: string, content: string, opts?: SendOptions): Promise<string | undefined> {
   // A model that returns no text must never surface as a bare name prefix in the chat.
   if (!content?.trim()) {
     console.warn(`[spokesperson] dropped an empty message from ${speaker}`);
-    return;
+    return undefined;
   }
   const s = db();
   const { data: agents } = await s.from("agents").select("*").eq("trip_id", trip.id);
-  await adapterFor(trip.provider).sendToGroup(trip.provider_group_id, formatFor(speaker, content, (agents ?? []) as Agent[]));
-  await s.from("messages").insert({ trip_id: trip.id, sender_type: "agent", persona: speaker, content });
+  const sent = await adapterFor(trip.provider).sendToGroup(trip.provider_group_id, formatFor(speaker, content, (agents ?? []) as Agent[]), opts);
+  await s.from("messages").insert({
+    trip_id: trip.id, sender_type: "agent", persona: speaker, content, provider_message_id: sent?.messageId ?? null,
+  });
+  return sent?.messageId;
 }
 
 /**
@@ -139,15 +147,19 @@ export async function tick(tripId: string, { force = false } = {}) {
   let posted = 0;
   for (const c of claimed) {
     const text = formatFor(c.speaker, c.content, (agents ?? []) as Agent[]);
+    let sentId: string | undefined;
     try {
-      await adapter.sendToGroup(t.provider_group_id, text);
+      sentId = (await adapter.sendToGroup(t.provider_group_id, text))?.messageId;
     } catch (err) {
       // Put it back so the next tick retries instead of losing the message
       await s.from("speak_candidates").update({ status: "pending" }).eq("id", c.id);
       console.error("[spokesperson] send failed, candidate returned to pending", err);
       continue;
     }
-    await s.from("messages").insert({ trip_id: tripId, sender_type: "agent", persona: c.speaker, content: c.content });
+    await s.from("messages").insert({
+      trip_id: tripId, sender_type: "agent", persona: c.speaker, content: c.content, provider_message_id: sentId ?? null,
+    });
+    if (c.trigger === "digest") await markDigestPosted(tripId, sentId);
     await s.from("speak_candidates").update({
       status: "posted", posted_at: new Date().toISOString(), reason: force ? "forced" : `trigger: ${c.trigger}`,
     }).eq("id", c.id);
