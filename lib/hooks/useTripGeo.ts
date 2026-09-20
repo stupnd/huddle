@@ -67,12 +67,16 @@ export function useTripGeo(stops: Stop[], near: string) {
           resolved.push({ stop, n: i + 1, coord: hit });
         }
         if (cancelled) return;
-        setPins(resolved);
+
+        // A name-based geocode can land on the wrong continent. Anything more than 150 km from
+        // the median of the other pins is a wrong guess, not a real stop, so drop it from the map.
+        const sane = dropOutliers(resolved, 150);
+        setPins(sane);
 
         const nextLegs: Leg[] = [];
-        for (let i = 0; i < resolved.length - 1; i++) {
-          const a = resolved[i];
-          const b = resolved[i + 1];
+        for (let i = 0; i < sane.length - 1; i++) {
+          const a = sane[i];
+          const b = sane[i + 1];
           const km = haversineKm(a.coord, b.coord);
           const mode: "foot" | "car" = km < 1.4 ? "foot" : "car";
           const res = await fetch(
@@ -81,6 +85,8 @@ export function useTripGeo(stops: Stop[], near: string) {
           if (!res.ok) continue;
           const body = (await res.json()) as Omit<Leg, "fromId" | "toId">;
           if (cancelled) return;
+          // Six hours or 300 km between two stops on one day means the routing is wrong, not the plan
+          if (body.durationSec > 6 * 3600 || body.distanceM > 300_000) continue;
           nextLegs.push({ ...body, fromId: a.stop.id, toId: b.stop.id });
         }
         if (cancelled) return;
@@ -116,4 +122,13 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
   const lat2 = (b.lat * Math.PI) / 180;
   const x = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(x));
+}
+
+/** Pins further than `km` from the median of the others are treated as failed geocodes. */
+function dropOutliers(pins: StopPin[], km: number): StopPin[] {
+  if (pins.length < 3) return pins;
+  const lats = pins.map((p) => p.coord.lat).sort((a, b) => a - b);
+  const lngs = pins.map((p) => p.coord.lng).sort((a, b) => a - b);
+  const mid = { lat: lats[Math.floor(lats.length / 2)], lng: lngs[Math.floor(lngs.length / 2)] };
+  return pins.filter((p) => haversineKm(p.coord, mid) <= km);
 }

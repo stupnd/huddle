@@ -30,7 +30,7 @@ export function DaySwitcher({ days, selected, onSelect, currency }: { days: Day[
       role="tablist"
       aria-label="days"
       onKeyDown={onKey}
-      className="sticky top-(--height-tabbar) z-(--z-sticky) -mx-2 flex gap-0.5 overflow-x-auto bg-canvas/85 px-2 py-1 backdrop-blur-md scrollbar-none md:-mx-4 md:px-4"
+      className="sticky top-(--height-tabbar) z-(--z-sticky) -mx-2 flex gap-0.5 overflow-x-auto bg-canvas/85 px-2 py-1 backdrop-blur-md scrollbar-none md:-mx-4 md:px-4 lg:top-0 lg:mx-0 lg:px-0"
     >
       {days.map((d) => {
         const active = d.index === selected;

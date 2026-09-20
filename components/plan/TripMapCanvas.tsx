@@ -41,7 +41,12 @@ export function TripMapCanvas({ stops, near, focusId, onSelectStop, onLegs, clas
   }, [pins, activeId]);
 
   const center = useMemo<[number, number]>(() => {
-    if (pins.length === 0) return [45.5017, -73.5673];
+    // Before any pin resolves, start from the first stop that already has coordinates from the
+    // planner; failing that a neutral world view. Never a hardcoded city (this used to be Montreal).
+    if (pins.length === 0) {
+      const known = stops.find((s) => s.place.lat != null && s.place.lng != null);
+      return known ? [known.place.lat!, known.place.lng!] : [20, 0];
+    }
     const lat = pins.reduce((s, p) => s + p.coord.lat, 0) / pins.length;
     const lng = pins.reduce((s, p) => s + p.coord.lng, 0) / pins.length;
     return [lat, lng];
@@ -87,7 +92,7 @@ export function TripMapCanvas({ stops, near, focusId, onSelectStop, onLegs, clas
 
       <MapContainer
         center={center}
-        zoom={13}
+        zoom={pins.length === 0 && !stops.some((s) => s.place.lat != null) ? 3 : 13}
         className="h-[min(62vh,32rem)] w-full [&_.leaflet-control-attribution]:bg-canvas/80 [&_.leaflet-control-attribution]:text-[9px] [&_.leaflet-control-attribution]:text-ink-3 [&_.leaflet-control-zoom]:border-line [&_.leaflet-control-zoom]:bg-canvas/90 [&_.leaflet-control-zoom_a]:text-ink"
         scrollWheelZoom
         zoomControl={false}

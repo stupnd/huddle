@@ -139,8 +139,8 @@ export function PlanTab() {
     <div className="flex flex-col gap-3">
       <TripGlance />
 
-      <div className="flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,1fr)_minmax(21rem,26rem)] md:items-start md:gap-4">
-      <section className="flex flex-col gap-1.5 md:sticky md:top-2" aria-label="trip map">
+      <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,11fr)_minmax(30rem,9fr)] lg:items-start lg:gap-4">
+      <section className="flex flex-col gap-1.5 lg:sticky lg:top-2" aria-label="trip map">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <h2 className="font-display text-display-md text-ink">the route</h2>
@@ -161,7 +161,7 @@ export function PlanTab() {
         />
       </section>
 
-      <div className="flex min-w-0 flex-col gap-2 md:max-h-[calc(100dvh-6rem)] md:overflow-y-auto md:pr-1">
+      <div className="relative flex min-w-0 flex-col gap-2 [&>*]:shrink-0 lg:max-h-[calc(100dvh-6rem)] lg:overflow-y-auto lg:pr-1">
       <DaySwitcher days={dayList} selected={selected} onSelect={selectDay} currency={snapshot.trip.currency} />
 
       <StaleBanner />
