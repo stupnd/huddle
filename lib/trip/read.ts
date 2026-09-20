@@ -1,4 +1,5 @@
 import { db, type Preference } from "@/lib/supabase";
+import { latestJob } from "@/lib/jobs";
 import type { TripApi } from "./api";
 
 /**
@@ -70,6 +71,7 @@ export async function readTrip(id: string): Promise<ReadResult> {
       votes: votes.error ? [] : (votes.data ?? []),
       votesReady: !votes.error,
       stopStatusReady,
+      planJob: await latestJob(id).catch(() => null),
       loadedAt: new Date().toISOString(),
     },
   };

@@ -292,4 +292,6 @@ export type TripSnapshot = {
   loadedAt: ISODate;
   /** true when the itinerary table exists and votes can be stored. false means run schema.sql */
   capabilities: { itinerary: boolean; votes: boolean; stopStatus: boolean };
+  /** plan build in progress or just finished; null when none has ever run */
+  planJob: { status: "queued" | "running" | "done" | "failed"; error: string | null; startedAt: ISODate | null } | null;
 };

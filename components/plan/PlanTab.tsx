@@ -7,7 +7,7 @@ import type { Stop } from "@/lib/domain/types";
 import { conflictsForDay, days as selectDays, droppedStopsForDay, gapMinutes, liveStopsForDay } from "@/lib/domain/select";
 import { listStagger } from "@/lib/design/tokens";
 import { api } from "@/lib/api";
-import { clock, minutes } from "@/lib/format";
+import { minutes } from "@/lib/format";
 import { formatTravel, type Leg } from "@/lib/hooks/useTripGeo";
 import { useAction } from "@/lib/hooks/useAction";
 import { useShell } from "@/components/shell/ShellProvider";
@@ -23,6 +23,7 @@ import { RemovedStrip } from "./RemovedStrip";
 import { Connector, StopCard } from "./StopCard";
 import { TripGlance } from "./TripGlance";
 import { TripMap } from "./TripMap";
+import { TimeCell, overlap } from "./TimeCell";
 
 /**
  * Plan tab: glance → interactive whole-day/trip map with travel times → day
@@ -85,34 +86,51 @@ export function PlanTab() {
       done: status === "dropped" ? `dropped ${stop.title}. it is in the removed strip if you change your mind.` : status === "locked" ? `${stop.title} is locked in.` : `${stop.title} is back on the plan.`,
     });
 
+  const editStop = (stop: Stop, patch: { start_time?: string; duration_min?: number; move?: "up" | "down" }) =>
+    run(`stop-${stop.id}`, () => api(`/api/trip/${tripId}/stops`, "PATCH", { stopId: stop.id, ...patch }), { silent: true });
+
   const openThread = (decisionId: string) => router.push(`/trip/${tripId}/decisions?thread=${decisionId}`);
 
   const onMapSelect = (id: string) => {
     setFocusId(id);
     const stop = snapshot.stops.find((s) => s.id === id);
     if (stop && stop.dayIndex !== selected) selectDay(stop.dayIndex);
-    requestAnimationFrame(() => document.getElementById(`stop-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+    // "nearest" scrolls the list's own pane on desktop, so the map stays where it is
+    requestAnimationFrame(() => document.getElementById(`stop-${id}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
   };
 
   if (snapshot.stops.length === 0) {
+    const job = snapshot.planJob;
+    const building = job?.status === "queued" || job?.status === "running";
+    const settled = snapshot.decisions.some((d) => d.status === "resolved") || Boolean(snapshot.trip.destination);
     return (
       <div className="flex flex-col gap-3">
         <TripGlance />
         <AgentFailures />
-        <EmptyState
-          title="no plan yet"
-          body={
-            snapshot.decisions.some((d) => d.status === "resolved")
-              ? "the group has settled a few things. huddle can turn them into a day-by-day plan with real places and prices."
-              : "nothing is settled yet. once the group chat picks a destination and dates, huddle builds the days from there."
-          }
-          action={
-            <Button variant="primary" onClick={build} disabled={planBusy !== null}>
-              <Sparkles className={planBusy === "build" ? "animate-spin" : undefined} />
-              {planBusy === "build" ? "building" : "build the plan"}
-            </Button>
-          }
-        />
+        {building ? (
+          <EmptyState
+            title="huddle is putting the plan together"
+            body="real places, times, photos and prices. usually under a minute. this page updates on its own."
+            action={<Sparkles className="animate-spin text-accent" aria-hidden />}
+          />
+        ) : job?.status === "failed" ? (
+          <EmptyState
+            title="that build didn't work"
+            body={job.error ?? "something went wrong."}
+            action={<Button variant="primary" onClick={build} disabled={planBusy !== null}>try again</Button>}
+          />
+        ) : settled ? (
+          <EmptyState
+            title="plan's on its way"
+            body="huddle builds this on its own once the group has a destination. it starts the next time anyone texts, or right now if you'd rather."
+            action={<Button variant="secondary" onClick={build} disabled={planBusy !== null}>build it now</Button>}
+          />
+        ) : (
+          <EmptyState
+            title="no plan yet"
+            body="once the group chat picks a destination and dates, huddle builds the days from there automatically. nothing to press."
+          />
+        )}
       </div>
     );
   }
@@ -121,7 +139,8 @@ export function PlanTab() {
     <div className="flex flex-col gap-3">
       <TripGlance />
 
-      <section className="flex flex-col gap-1.5" aria-label="trip map">
+      <div className="flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,1fr)_minmax(21rem,26rem)] md:items-start md:gap-4">
+      <section className="flex flex-col gap-1.5 md:sticky md:top-2" aria-label="trip map">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <h2 className="font-display text-display-md text-ink">the route</h2>
@@ -142,6 +161,7 @@ export function PlanTab() {
         />
       </section>
 
+      <div className="flex min-w-0 flex-col gap-2 md:max-h-[calc(100dvh-6rem)] md:overflow-y-auto md:pr-1">
       <DaySwitcher days={dayList} selected={selected} onSelect={selectDay} currency={snapshot.trip.currency} />
 
       <StaleBanner />
@@ -178,14 +198,19 @@ export function PlanTab() {
               {i > 0 && (
                 <div className="col-start-2">
                   <Connector
-                    label={travel?.label ?? connectorLabel(prev, stop)}
-                    accent={Boolean(travel)}
+                    label={(() => { const o = overlap(prev, stop); return o ? `${travel?.label ?? connectorLabel(prev, stop) ?? "next"} · starts ${o} min too early` : (travel?.label ?? connectorLabel(prev, stop)); })()}
+                    accent={Boolean(travel) || Boolean(overlap(prev, stop))}
                     onJump={() => onMapSelect(stop.id)}
                   />
                 </div>
               )}
-              <div className="col-start-1 pt-2 text-right">
-                <time className="font-body text-figure text-ink figures">{stop.time ? clock(stop.time) : stop.timeLabel || "tbd"}</time>
+              <div className="col-start-1">
+                <TimeCell
+                  stop={stop} first={i === 0} last={i === live.length - 1} busy={busy === `stop-${stop.id}`}
+                  onTime={(v) => editStop(stop, { start_time: v })}
+                  onDuration={(v) => editStop(stop, { duration_min: v })}
+                  onMove={(dir) => editStop(stop, { move: dir })}
+                />
               </div>
               <div className="col-start-2">
                 <StopCard
@@ -207,6 +232,8 @@ export function PlanTab() {
       </motion.ol>
 
       <RemovedStrip stops={dropped} busy={busy} onRestore={(s) => setStatus(s, "proposed")} />
+      </div>
+      </div>
     </div>
   );
 }

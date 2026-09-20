@@ -10,7 +10,7 @@ import { runChimeIn } from "./agents/chimein";
 import { runStuckCheck } from "./agents/stuck";
 import { BUDGET, HUDDLE, isAddressedTo } from "./agents/personas";
 import { postNow, tick } from "./agents/spokesperson";
-import { buildItinerary } from "./agents/planner";
+import { enqueuePlan } from "./jobs";
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 
@@ -212,12 +212,10 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   // The planner posts its own two-line summary with a link, so no direct reply on top.
   const wantsPlan = tagged?.key === HUDDLE.key && /\b(plan|itinerary|schedule|timeline)\b/i.test(msg.text);
   if (wantsPlan && ctx.trip.activity_level !== "paused") {
-    const { items } = await buildItinerary(trip.id);
-    if (items.length) {
-      await tick(trip.id, { force: true });
-      return { tripId: trip.id, plan: "itinerary" };
-    }
-    // Nothing settled enough to plan yet: fall through and let Huddle say so
+    // Queue it (announced) and acknowledge now; the worker posts the plan when it's built
+    const job = await enqueuePlan(trip.id, "plan", true);
+    await postNow(ctx.trip, HUDDLE.key, job ? "on it, give me a minute" : "already working on it");
+    return { tripId: trip.id, plan: "itinerary" };
   }
 
   if (tagged && ctx.trip.activity_level !== "paused") {
@@ -250,7 +248,30 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
     if (plan.action === "start_debate" && spawned.length === 2) await runDebate(spawned);
   }
 
+  // Keep the plan current without anyone pressing a button. A trip with a title or a decided
+  // item gets a silent rebuild queued whenever something changed since the last build; the
+  // queue dedupes, so a burst of messages costs one build, and the worker does the slow part.
+  await maybeAutoPlan(trip.id);
+
   // 5. Speak gate: posts only if the chat is quiet and cooldown allows
   await tick(trip.id);
   return { tripId: trip.id, plan: plan.action };
+}
+
+const AUTO_PLAN_MIN_GAP_MS = 3 * 60_000;
+
+async function maybeAutoPlan(tripId: string) {
+  const s = db();
+  const [{ data: trip }, { data: decided }, { data: lastBuild }, { data: latestChange }] = await Promise.all([
+    s.from("trips").select("title").eq("id", tripId).maybeSingle(),
+    s.from("decisions").select("id").eq("trip_id", tripId).eq("status", "decided").limit(1),
+    s.from("itinerary_items").select("created_at").eq("trip_id", tripId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    s.from("decisions").select("updated_at").eq("trip_id", tripId).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (!trip?.title && !decided?.length) return;                     // nothing to plan around yet
+  const builtAt = lastBuild ? new Date(lastBuild.created_at).getTime() : 0;
+  const changedAt = latestChange ? new Date(latestChange.updated_at).getTime() : Date.now();
+  if (builtAt && changedAt <= builtAt) return;                        // plan already reflects the latest state
+  if (Date.now() - builtAt < AUTO_PLAN_MIN_GAP_MS) return;            // don't thrash on a burst
+  await enqueuePlan(tripId, "plan", false);
 }

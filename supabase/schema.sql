@@ -157,6 +157,24 @@ create table if not exists login_codes (
 create index if not exists login_codes_phone on login_codes (phone, created_at desc);
 alter table login_codes enable row level security;
 
+-- Long-running work the worker does so Vercel functions never run the planner (60 s limit).
+create table if not exists jobs (
+  id uuid primary key default gen_random_uuid(),
+  trip_id uuid not null references trips(id) on delete cascade,
+  kind text not null,                                   -- plan | replan
+  status text not null default 'queued',                -- queued | running | done | failed
+  announce boolean not null default false,              -- post a summary to the chat when done
+  error text,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+create index if not exists jobs_pending on jobs (status, created_at);
+alter table jobs enable row level security;
+
+alter table itinerary_items add column if not exists duration_min int;                -- how long the stop takes
+alter table itinerary_items add column if not exists travel_from_prev_min int;        -- driving minutes from the previous stop that day
+
 create index if not exists messages_trip_created on messages (trip_id, created_at);
 create index if not exists candidates_trip_status on speak_candidates (trip_id, status);
 

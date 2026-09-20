@@ -13,16 +13,16 @@ export function usePlanActions() {
 
   const build = useCallback(
     () =>
-      run("build", () => api<{ items: number }>(`/api/trip/${tripId}/plan`, "POST"), {
-        done: (r) => `plan built: ${r.items} stops. huddle posted it to the chat.`,
+      run("build", () => api<{ queued: boolean; alreadyRunning: boolean }>(`/api/trip/${tripId}/plan`, "POST"), {
+        done: (r) => (r.alreadyRunning ? "huddle is already building it." : "huddle is building the plan. under a minute, this page updates on its own."),
       }),
     [run, tripId],
   );
 
   const replan = useCallback(
     () =>
-      run("replan", () => api<{ replanned: string[] }>(`/api/trip/${tripId}/replan`, "POST"), {
-        done: (r) => `${r.replanned.join(" and ").toLowerCase()} redid the plan. posted to the chat.`,
+      run("replan", () => api<{ queued: boolean; alreadyRunning: boolean }>(`/api/trip/${tripId}/replan`, "POST"), {
+        done: (r) => (r.alreadyRunning ? "already replanning." : "replanning. the agents refresh their options first, then the plan. about a minute."),
       }),
     [run, tripId],
   );

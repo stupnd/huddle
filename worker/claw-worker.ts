@@ -14,9 +14,12 @@
 import { claw, DM_TEST_MODE, parseClawMessage } from "../lib/messaging/claw";
 import { handleInbound, parseTripTitle, startTrip } from "../lib/pipeline";
 import { db } from "../lib/supabase";
-import { loadContext } from "../lib/agents/context";
 import { runMonitor } from "../lib/agents/monitor";
 import { tick } from "../lib/agents/spokesperson";
+import { claimNextJob, finishJob, reclaimStuckJobs } from "../lib/jobs";
+import { buildItinerary } from "../lib/agents/planner";
+import { runSpecialist } from "../lib/agents/specialist";
+import { loadContext } from "../lib/agents/context";
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 const PHONE = /\+?\d[\d\s().-]{8,}\d/g;
@@ -217,6 +220,35 @@ async function main() {
   if (DM_TEST_MODE) {
     console.log("[huddle] DM_TEST_MODE is on: your 1:1 chat with Huddle runs as a one-person group. Turn it off for real groups.");
   }
+  // Plan jobs: the dashboard and the pipeline enqueue, this drains. One at a time; the planner
+  // is slow and two builds of the same trip would race on the delete-and-insert.
+  let draining = false;
+  setInterval(async () => {
+    if (draining) return;
+    draining = true;
+    try {
+      await reclaimStuckJobs();
+      const job = await claimNextJob();
+      if (!job) return;
+      console.log(`[jobs] ${job.kind} for trip ${job.trip_id.slice(0, 8)}${job.announce ? " (announce)" : ""}`);
+      try {
+        if (job.kind === "replan") {
+          const ctx = await loadContext(job.trip_id);
+          for (const agent of ctx.agents) await runSpecialist(agent);
+        }
+        const { items } = await buildItinerary(job.trip_id, { announce: job.announce });
+        await finishJob(job.id, items.length ? undefined : "not enough settled to build a plan yet");
+        if (job.announce) await tick(job.trip_id, { force: true });
+        console.log(`[jobs] done: ${items.length} stops`);
+      } catch (err) {
+        await finishJob(job.id, err instanceof Error ? err.message : String(err));
+        console.error("[jobs] failed", err);
+      }
+    } finally {
+      draining = false;
+    }
+  }, 5_000);
+
   console.log("[huddle] worker running");
 }
 

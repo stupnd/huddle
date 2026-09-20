@@ -72,6 +72,7 @@ export function adaptTrip(api: TripApi): TripSnapshot {
     viewerId: "",
     loadedAt: api.loadedAt,
     capabilities: { itinerary: api.itineraryReady, votes: api.votesReady, stopStatus: api.stopStatusReady },
+    planJob: api.planJob ? { status: api.planJob.status, error: api.planJob.error, startedAt: api.planJob.started_at } : null,
   };
 }
 
@@ -613,6 +614,8 @@ function adaptStops(api: TripApi, decisions: Decision[], members: Member[], mess
       dayLabel: row.day_label,
       time: parseClock(row.start_time),
       timeLabel: (row.start_time ?? "").toLowerCase(),
+      durationMin: row.duration_min ?? undefined,
+      travelFromPrevMin: row.travel_from_prev_min ?? undefined,
       title: stripEmoji(row.title),
       place: { name: row.place ?? row.title, neighborhood: neighborhoodOf(row.place, row.title), photoUrl: row.image_url, lat: row.lat ?? undefined, lng: row.lng ?? undefined },
       links: { maps: row.maps_url ?? undefined, wiki: row.wiki_url ?? undefined },

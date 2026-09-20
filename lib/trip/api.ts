@@ -1,4 +1,4 @@
-import type { Agent, Decision, ItineraryItem, Message, Participant, Preference, Trip } from "@/lib/supabase";
+import type { Job, Agent, Decision, ItineraryItem, Message, Participant, Preference, Trip } from "@/lib/supabase";
 
 /**
  * The JSON shape of GET /api/trip/[id]. Shared by the server reader, the route,
@@ -49,5 +49,7 @@ export type TripApi = {
   votes: VoteRow[];
   votesReady: boolean;
   stopStatusReady: boolean;
+  /** the most recent plan build, so the dashboard can say "building" or show an error */
+  planJob: Job | null;
   loadedAt: string;
 };

@@ -2,12 +2,12 @@ import { db, type ItineraryItem } from "../supabase";
 import { askJSON, MODELS } from "./claude";
 import { describe, loadContext } from "./context";
 import { lookupPlace, mapsUrl } from "../places";
-import { googleEnabled, searchPlaces } from "../tools/google";
+import { getRoutes, googleEnabled, searchPlaces } from "../tools/google";
 
 type PlannedItem = {
   day_label: string; day_index: number; start_time?: string; title: string;
   place?: string; place_query?: string; notes?: string;
-  category?: string; est_cost_per_person?: number;
+  category?: string; est_cost_per_person?: number; duration_min?: number;
 };
 const CATEGORIES = ["stays", "food", "activities", "transport", "nightlife"];
 type Plan = { destination_query?: string; items: PlannedItem[]; summary: string };
@@ -17,7 +17,7 @@ type Plan = { destination_query?: string; items: PlannedItem[]; summary: string 
  * then decorates each stop with a photo and links. Replaces any previous itinerary for the trip.
  * Posts a two-line summary to the chat so the group knows the plan changed.
  */
-export async function buildItinerary(tripId: string): Promise<{ items: ItineraryItem[]; summary: string }> {
+export async function buildItinerary(tripId: string, { announce = true } = {}): Promise<{ items: ItineraryItem[]; summary: string }> {
   const ctx = await loadContext(tripId);
   const s = db();
 
@@ -38,12 +38,13 @@ Rules:
 - place_query: the name Wikipedia would know, for a photo. For a landmark or neighbourhood use its proper name ("Griffith Observatory", "Venice Beach"). For a hotel or restaurant leave it out.
 - destination_query: the city's proper name for a hero photo ("Los Angeles").
 - category: one of stays, food, activities, transport, nightlife.
+- duration_min: how long this stop takes, in minutes (a meal 75, a museum 120, a check-in 20, an airport transfer is the travel itself so 0).
 - est_cost_per_person: a realistic number in dollars for this stop, per person. 0 if free. Split shared costs (a hotel room, an uber) across the group size you can see. Use real prices from search where you can.
 - summary: two short lines for the group chat announcing the plan, no preamble.
 
 Reply with JSON only:
 {"destination_query": "Los Angeles", "summary": "plan's up: sat is venice + the pier, sun is griffith + weho\\nfull timeline is on the dashboard",
- "items": [{"day_label": "Saturday, Sep 19", "day_index": 0, "start_time": "1:00pm", "title": "Land at LAX", "place": "Los Angeles International Airport", "place_query": "Los Angeles International Airport", "notes": "uber to santa monica is 25 to 40 min, about $35", "category": "transport", "est_cost_per_person": 18}]}`,
+ "items": [{"day_label": "Saturday, Sep 19", "day_index": 0, "start_time": "1:00pm", "title": "Land at LAX", "place": "Los Angeles International Airport", "place_query": "Los Angeles International Airport", "notes": "uber to santa monica is 25 to 40 min, about $35", "category": "transport", "est_cost_per_person": 18, "duration_min": 0}]}`,
       prompt: describe(ctx),
     },
     { items: [], summary: "" }
@@ -74,10 +75,14 @@ Reply with JSON only:
         lng: g?.lng ?? null,
         category: CATEGORIES.includes(it.category ?? "") ? it.category : null,
         est_cost_per_person: typeof it.est_cost_per_person === "number" && it.est_cost_per_person >= 0 ? Math.round(it.est_cost_per_person) : null,
+        duration_min: typeof it.duration_min === "number" && it.duration_min >= 0 ? Math.round(it.duration_min) : null,
+        travel_from_prev_min: null as number | null,
         sort: i,
       };
     })
   );
+
+  await fillTravelTimes(rows);
 
   await s.from("itinerary_items").delete().eq("trip_id", tripId);
   const { data: inserted, error } = await s.from("itinerary_items").insert(rows).select();
@@ -92,7 +97,7 @@ Reply with JSON only:
     }
   }
 
-  if (plan.summary) {
+  if (plan.summary && announce) {
     const appUrl = process.env.APP_URL ?? "http://localhost:3000";
     await s.from("speak_candidates").insert({
       trip_id: tripId, speaker: "huddle", trigger: "decision_ready", urgency: 2, seq: 0,
@@ -101,4 +106,21 @@ Reply with JSON only:
   }
 
   return { items: (inserted ?? []) as ItineraryItem[], summary: plan.summary };
+}
+
+type TravelRow = { day_index: number; lat: number | null; lng: number | null; place: string | null; travel_from_prev_min: number | null };
+
+/** Driving minutes from the previous stop that day. Mutates rows in place. Exported so reorders can recompute. */
+export async function fillTravelTimes(rows: TravelRow[]) {
+  if (!googleEnabled()) return;
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1], b = rows[i];
+    if (a.day_index !== b.day_index) { b.travel_from_prev_min = null; continue; }
+    const from = a.lat != null && a.lng != null ? `${a.lat},${a.lng}` : a.place;
+    const to = b.lat != null && b.lng != null ? `${b.lat},${b.lng}` : b.place;
+    if (!from || !to) { b.travel_from_prev_min = null; continue; }
+    const routes = await getRoutes(from, to);
+    const drive = routes.find((r) => r.mode === "driving") ?? routes[0];
+    b.travel_from_prev_min = drive ? drive.minutes : null;
+  }
 }

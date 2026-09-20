@@ -72,5 +72,11 @@ export type ItineraryItem = {
   id: string; trip_id: string; day_label: string; day_index: number; start_time: string | null;
   title: string; place: string | null; notes: string | null;
   maps_url: string | null; wiki_url: string | null; image_url: string | null;
-  category: string | null; est_cost_per_person: number | null; lat: number | null; lng: number | null; sort: number;
+  category: string | null; est_cost_per_person: number | null; lat: number | null; lng: number | null;
+  duration_min: number | null; travel_from_prev_min: number | null; sort: number;
+};
+
+export type Job = {
+  id: string; trip_id: string; kind: "plan" | "replan"; status: "queued" | "running" | "done" | "failed";
+  announce: boolean; error: string | null; created_at: string; started_at: string | null; finished_at: string | null;
 };
