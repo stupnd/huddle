@@ -2,7 +2,7 @@ import { db, type Message } from "../supabase";
 import { askJSON, MODELS } from "./claude";
 import { describe, findDecision, sameTopic, type TripContext } from "./context";
 
-type Pref = { category: string; value: string; private: boolean; replaces_existing_category?: boolean };
+type Pref = { category: string; value: string; private: boolean; replaces_existing_category?: boolean; about?: string | null };
 type Dec = { topic: string; status: "open" | "proposed" | "decided"; chosen: string | null; options: string[] };
 type Vote = { topic: string; option: string };
 
@@ -29,6 +29,7 @@ function normalizePrefs(raw: any[]): Pref[] {
       value: String(value).trim(),
       private: Boolean(p.private ?? p.is_private),
       replaces_existing_category: Boolean(p.replaces_existing_category ?? p.replaces),
+      about: typeof p.about === "string" && p.about.trim() && !/^(me|myself|self|null)$/i.test(p.about.trim()) ? p.about.trim() : null,
     }];
   });
 }
@@ -74,6 +75,7 @@ You NEVER talk in the chat. Your only job is to turn the newest message into str
 
 Rules:
 - Extract only preferences the SENDER states about themselves (dates they can do, budget, lodging, transport, food, activities, dislikes).
+- One exception: a dietary need, allergy, mobility limit or firm dislike the sender states for a NAMED person in the chat ("Priya's vegetarian", "Sam can't do stairs"). Record it with "about" set to that person's name, and never guess a name.
 - Budget amounts and anything about money trouble are private: set private=true.
 - Ignore jokes, memes, and banter. Most messages produce nothing.
 - If the sender changes their mind, set replaces_existing_category=true.
@@ -88,11 +90,18 @@ Rules:
 Reply with JSON only, using exactly these keys. Use "value", never "preference". Use "topic", never "details".
 {"trip_title": "Montreal, reading week",
  "sender_display_name": null,
- "preferences": [{"category": "transport", "value": "wants walkable, no ubers", "private": false, "replaces_existing_category": false}],
+ "preferences": [{"category": "transport", "value": "wants walkable, no ubers", "private": false, "replaces_existing_category": false, "about": null}],
  "decisions": [{"topic": "where to stay", "status": "open", "chosen": null, "options": []}],
  "votes": [{"topic": "where to stay", "option": "the hostel"}]}
 
 Return empty arrays when the message contains nothing worth recording.`;
+
+/** Matches a name to someone in the chat: the whole display name or just the first name, ignoring case. */
+export function findPerson<T extends { display_name: string | null }>(people: T[], name: string): T | undefined {
+  const want = name.trim().toLowerCase();
+  const first = (s: string) => s.trim().toLowerCase().split(/\s+/)[0];
+  return people.find((p) => p.display_name && (p.display_name.trim().toLowerCase() === want || first(p.display_name) === first(want)));
+}
 
 export async function runListener(ctx: TripContext, message: Message, senderLabel: string) {
   const out = await askJSON<ListenerOutput>(
@@ -116,14 +125,21 @@ export async function runListener(ctx: TripContext, message: Message, senderLabe
   }
 
   for (const p of normalizePrefs(out.preferences)) {
-    if (p.replaces_existing_category) {
+    // A need the sender states for someone else belongs to that person. When the name matches no one
+    // in the chat yet, keep it under the sender with the name in front so it still reaches every agent.
+    const subject = p.about ? findPerson(ctx.participants, p.about) : undefined;
+    const forOther = Boolean(p.about) && subject?.id !== participantId;
+    const ownerId = forOther && subject ? subject.id : participantId;
+    const value = forOther && !subject ? `${p.about}: ${p.value}` : p.value;
+    // Only someone's own change of mind may clear their earlier answer
+    if (p.replaces_existing_category && !forOther) {
       await s.from("preferences").delete().eq("participant_id", participantId).eq("category", p.category);
     }
     const { error } = await s.from("preferences").insert({
       trip_id: ctx.trip.id,
-      participant_id: participantId,
+      participant_id: ownerId,
       category: p.category,
-      value: p.value,
+      value,
       visibility: p.private ? "private" : "group",
       source_message_id: message.id,
     });

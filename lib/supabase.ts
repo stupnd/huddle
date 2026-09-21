@@ -41,6 +41,7 @@ export type Trip = {
     hero_wiki?: string | null;
     hero_caption?: string | null;
     mention_mode?: "call_out" | "listen_in";
+    fit_check?: { flagged: string[]; flagged_at: string }; // plan problems already raised, so none is raised twice
     budget_check?: { signature: string; flagged_at: string }; // the last plan-over-budget alert, so the same one is not repeated
     digest?: DigestState; // the numbered open-decisions list, so a later answer can be matched to an item
     monitor?: {

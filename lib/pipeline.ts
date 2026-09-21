@@ -10,6 +10,7 @@ import { runChimeIn } from "./agents/chimein";
 import { answerDigestItems, postDigestNow, runDigest } from "./agents/digest";
 import { WHATS_LEFT } from "./agents/digest-state";
 import { checkBudget } from "./agents/budget";
+import { checkPlanFit } from "./agents/fit";
 import { BUDGET, HUDDLE, unknownAgentMention, whoIsTagged } from "./agents/personas";
 import { postNow, tick } from "./agents/spokesperson";
 import { enqueuePlan } from "./jobs";
@@ -181,7 +182,7 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   const senderLabel = participant!.display_name ?? msg.fromAddress;
 
   // 1. Listener always runs, silently
-  await runListener(ctx, message, senderLabel);
+  const heard = await runListener(ctx, message, senderLabel);
   ctx = await loadContext(trip.id);
 
   // 1b. On long chats, scan recent agent posts for drift against prefs/decisions
@@ -268,6 +269,12 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   // 4b. Is the plan now over what someone said they can spend? Skipped when Penny was just asked
   // directly, since she is already answering the money question; the next message or plan build re-checks.
   if (tagged?.key !== BUDGET.key) await checkBudget(trip.id).catch((err) => console.error("[budget] check failed", err));
+
+  // 4c. Does the plan still fit everyone? Worth a model call only when something it depends on just
+  // changed: someone stated a need, or a specialist just put new options on the table.
+  if ((heard?.preferences?.length ?? 0) > 0 || plan.action === "spawn_specialist") {
+    await checkPlanFit(trip.id).catch((err) => console.error("[fit] check failed", err));
+  }
 
   // 5. Speak gate: posts only if the chat is quiet and cooldown allows
   await tick(trip.id);

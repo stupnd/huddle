@@ -16,6 +16,7 @@ import { handleInbound, parseTripTitle, startTrip } from "../lib/pipeline";
 import { db } from "../lib/supabase";
 import { runMonitor } from "../lib/agents/monitor";
 import { checkBudget } from "../lib/agents/budget";
+import { checkPlanFit } from "../lib/agents/fit";
 import { tick } from "../lib/agents/spokesperson";
 import { claimNextJob, finishJob, reclaimStuckJobs } from "../lib/jobs";
 import { buildItinerary } from "../lib/agents/planner";
@@ -239,7 +240,10 @@ async function main() {
         }
         const { items } = await buildItinerary(job.trip_id, { announce: job.announce });
         await finishJob(job.id, items.length ? undefined : "not enough settled to build a plan yet");
-        if (items.length) await checkBudget(job.trip_id).catch((err) => console.error("[budget] check failed", err));
+        if (items.length) {
+          await checkBudget(job.trip_id).catch((err) => console.error("[budget] check failed", err));
+          await checkPlanFit(job.trip_id).catch((err) => console.error("[fit] check failed", err));
+        }
         if (job.announce) await tick(job.trip_id, { force: true });
         console.log(`[jobs] done: ${items.length} stops`);
       } catch (err) {
