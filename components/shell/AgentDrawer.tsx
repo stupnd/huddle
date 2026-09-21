@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pin, PinOff, X } from "lucide-react";
-import { activeAgents, agentById, workingAgents } from "@/lib/domain/select";
+import { activeAgents, activeSpecialists, agentById, workingAgents } from "@/lib/domain/select";
 import { useNow } from "@/lib/hooks/useNow";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
@@ -45,6 +45,7 @@ function DrawerBody() {
   const [highlight, setHighlight] = useState<string | null>(null);
   const live = useMemo(() => workingAgents(snapshot), [snapshot]);
   const roster = useMemo(() => activeAgents(snapshot), [snapshot]);
+  const specialists = useMemo(() => activeSpecialists(snapshot), [snapshot]);
 
   // scroll to a targeted message, then let the highlight fade
   useEffect(() => {
@@ -76,7 +77,7 @@ function DrawerBody() {
         <div className="flex min-w-0 items-center gap-1.5">
           <h2 className="font-display text-display-sm text-ink">agent chat</h2>
           <span className="text-body-sm text-ink-3 figures">
-            {live.length > 0 ? `${live.length} working` : `${plural(roster.length, "agent")} on the trip`}
+            {live.length > 0 ? `${live.length} working` : (specialists.length ? `${plural(specialists.length, "specialist")} on the trip` : "no specialists yet")}
           </span>
         </div>
         <div className="flex items-center gap-0.5">

@@ -24,7 +24,7 @@ const state = (over: Partial<DigestState> = {}): DigestState => ({
 // the list is short, numbered, most important first, and tells people how to answer
 assert.equal(
   renderDigest(items),
-  'still open, most important first:\n1. Skiing - is it happening?\n2. Johnston Canyon full day tour - which date?\nanswer any of them by number, like "1: yes, jan 4"'
+  'Decisions Remaining:\n1. Skiing - is it happening?\n2. Johnston Canyon full day tour - which date?\nreply by number, like "1: yes, jan 4"'
 );
 
 // never more than four items, and a full list survives the chat's length cap untouched

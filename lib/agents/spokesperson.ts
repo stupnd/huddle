@@ -1,7 +1,10 @@
 import { adapterFor, type SendOptions } from "../messaging";
 import { db, type Agent, type Trip } from "../supabase";
 import { markDigestPosted } from "./digest-state";
-import { BUDGET, HUDDLE, prefix } from "./personas";
+import { loadContext } from "./context";
+import { verifyDraft } from "./monitor";
+import { BUDGET, HUDDLE, prefix, whoIsMentioned } from "./personas";
+import { directReply } from "./reply";
 
 const LULL = Number(process.env.LULL_SECONDS ?? 90) * 1000;
 const COOLDOWN = Number(process.env.COOLDOWN_SECONDS ?? 1800) * 1000;
@@ -110,6 +113,36 @@ export async function postNow(trip: Trip, speaker: string, content: string, opts
   return ids[0];
 }
 
+/** Agents talking among themselves (debates, intros, sign-offs) name each other as banter, not as a question. */
+const NO_HANDOFF = new Set(["debate", "intro", "signoff"]);
+
+/**
+ * When a posted message "@"-tags an agent ("@nova can you find options"), that agent answers next.
+ * The pipeline does this for replies to a human, but messages Huddle raises on its own (chime-in,
+ * monitor, digest) skip the pipeline, so without this the question landed in the chat and nobody heard it.
+ * One hop only: the answer is not handed on again, so two agents cannot ping-pong.
+ */
+async function handOff(tripId: string, calls: { from: string; text: string }[]) {
+  const ctx = await loadContext(tripId);
+  if (ctx.trip.activity_level === "paused") return;
+  const pennyOn = ctx.trip.settings?.penny !== false;
+  const nameOf = (key: string) =>
+    key === HUDDLE.key ? HUDDLE.name : key === BUDGET.key ? BUDGET.name : ctx.agents.find((a) => a.id === key)?.persona_name ?? "someone";
+
+  const answered = new Set<string>();
+  for (const call of calls) {
+    const target = whoIsMentioned(call.text, ctx.agents, call.from, pennyOn);
+    if (!target || answered.has(target.key)) continue;
+    answered.add(target.key);
+    try {
+      const draft = await directReply(ctx, target, `${nameOf(call.from)} asked you: ${call.text}`);
+      await postNow(ctx.trip, target.key, await verifyDraft(ctx, target, draft));
+    } catch (err) {
+      console.error(`[spokesperson] ${target.name} could not answer ${nameOf(call.from)}`, err);
+    }
+  }
+}
+
 /**
  * The speak-when-needed gate. Called after every message and by a cron / the simulator every ~15s.
  * Pending candidates post only when the chat has gone quiet and the group cooldown allows it.
@@ -190,6 +223,7 @@ export async function tick(tripId: string, { force = false } = {}) {
   const { data: agents } = await s.from("agents").select("*").eq("trip_id", tripId);
 
   let posted = 0;
+  const handoffs: { from: string; text: string }[] = [];
   for (const c of claimed) {
     const { ids, remaining, error } = await deliver(t, c.speaker, c.content, (agents ?? []) as Agent[]);
     if (error) {
@@ -203,8 +237,10 @@ export async function tick(tripId: string, { force = false } = {}) {
       status: "posted", posted_at: new Date().toISOString(), reason: force ? "forced" : `trigger: ${c.trigger}`,
     }).eq("id", c.id);
     posted++;
+    if (!NO_HANDOFF.has(c.trigger)) handoffs.push({ from: c.speaker, text: c.content });
     if (claimed.length > 1) await new Promise((r) => setTimeout(r, PART_GAP_MS));
   }
   await s.from("trips").update({ last_agent_post_at: new Date().toISOString() }).eq("id", tripId);
+  if (handoffs.length) await handOff(tripId, handoffs);
   return { posted, reason: "posted" };
 }

@@ -9,7 +9,8 @@ import { runMonitor, verifyDraft } from "./agents/monitor";
 import { runChimeIn } from "./agents/chimein";
 import { answerDigestItems, postDigestNow, runDigest } from "./agents/digest";
 import { WHATS_LEFT } from "./agents/digest-state";
-import { BUDGET, HUDDLE, isAddressedTo } from "./agents/personas";
+import { checkBudget } from "./agents/budget";
+import { BUDGET, HUDDLE, unknownAgentMention, whoIsTagged } from "./agents/personas";
 import { postNow, tick } from "./agents/spokesperson";
 import { enqueuePlan } from "./jobs";
 
@@ -116,18 +117,6 @@ async function handleControl(trip: Trip, text: string): Promise<{ handled: boole
   return { handled: false };
 }
 
-type Speaker = { key: string; name: string; role: string };
-
-/** Which agent a message addresses, if any. `except` stops an agent from calling itself. */
-function whoIsTagged(text: string, agents: Agent[], except?: string, pennyOn = true): Speaker | null {
-  const candidates: Speaker[] = [
-    { key: HUDDLE.key, name: HUDDLE.name, role: "host" },
-    ...(pennyOn ? [{ key: BUDGET.key, name: BUDGET.name, role: "budget agent" }] : []),
-    ...agents.map((a) => ({ key: a.id, name: a.persona_name, role: `${a.role} agent` })),
-  ];
-  return candidates.find((c) => c.key !== except && isAddressedTo(text, c.key === BUDGET.key ? [c.name, "budget"] : [c.name])) ?? null;
-}
-
 export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: string; plan?: string; duplicate?: boolean }> {
   const s = db();
 
@@ -209,6 +198,18 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   const pennyOn = ctx.trip.settings?.penny !== false;
   const tagged = whoIsTagged(msg.text, ctx.agents, undefined, pennyOn);
 
+  // "@juno" when only Nova is here would otherwise vanish. Say who is around instead.
+  if (!tagged && ctx.trip.activity_level !== "paused") {
+    const missing = unknownAgentMention(msg.text, ctx.agents, ctx.participants.map((p) => p.display_name ?? ""));
+    if (missing) {
+      const here = ctx.agents.map((a) => `${a.persona_name} (${a.role})`).join(", ");
+      await postNow(ctx.trip, HUDDLE.key,
+        `there's no ${missing} on this trip${here ? `. here: ${here}` : ", just me"}${pennyOn ? ", plus penny for budget" : ""}. ` +
+        `tell me what you need and i'll bring in the right specialist`);
+      return { tripId: trip.id };
+    }
+  }
+
   // "@huddle plan saturday" builds the real itinerary rather than a made-up one in prose.
   // The planner posts its own two-line summary with a link, so no direct reply on top.
   const wantsPlan = tagged?.key === HUDDLE.key && /\b(plan|itinerary|schedule|timeline)\b/i.test(msg.text);
@@ -263,6 +264,10 @@ export async function handleInbound(msg: InboundMessage): Promise<{ tripId?: str
   // item gets a silent rebuild queued whenever something changed since the last build; the
   // queue dedupes, so a burst of messages costs one build, and the worker does the slow part.
   await maybeAutoPlan(trip.id);
+
+  // 4b. Is the plan now over what someone said they can spend? Skipped when Penny was just asked
+  // directly, since she is already answering the money question; the next message or plan build re-checks.
+  if (tagged?.key !== BUDGET.key) await checkBudget(trip.id).catch((err) => console.error("[budget] check failed", err));
 
   // 5. Speak gate: posts only if the chat is quiet and cooldown allows
   await tick(trip.id);

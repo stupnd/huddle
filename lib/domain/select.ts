@@ -13,6 +13,11 @@ export function activeAgents(s: TripSnapshot): Agent[] {
   return s.agents.filter((a) => a.active);
 }
 
+/** specialists Huddle brought in. Huddle and Penny are always there, so they are never part of a headcount. */
+export function activeSpecialists(s: TripSnapshot): Agent[] {
+  return activeAgents(s).filter((a) => !a.builtIn);
+}
+
 /** agents that are doing something right now, for the status strip */
 export function workingAgents(s: TripSnapshot): Agent[] {
   const busy: AgentState[] = ["thinking", "debating", "waiting", "error"];

@@ -25,7 +25,7 @@ Rank by importance:
 Only include something that is genuinely unsettled. Skip anything the chat shows the group already agreed on, anything marked decided, and requests for plans or information (those are not decisions).
 At most ${MAX_ITEMS} items. Fewer is better. Return none if nothing real is open.
 
-For each item write "topic" (2 to 5 words) and "question": one plain question a friend would ask, under 60 characters, no jargon.
+For each item write "topic" (2 to 5 words) and "question": one plain question a friend would ask, as short as you can make it (under 45 characters), no jargon.
 Examples: "Skiing - is it happening?", "Johnston Canyon tour - which date?", "Where to stay - Fairmont or the brother's place?"
 If the item matches a decision in the DECISIONS list, copy that decision's exact topic into "decision_topic", otherwise null.
 

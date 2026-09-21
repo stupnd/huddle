@@ -46,8 +46,8 @@ function tidy(text: string, max: number) {
 }
 
 export function renderDigest(items: Pick<DigestItem, "question">[]): string {
-  const lines = items.slice(0, MAX_ITEMS).map((it, i) => `${i + 1}. ${tidy(it.question, 80)}`);
-  return `still open, most important first:\n${lines.join("\n")}\nanswer any of them by number, like "1: yes, jan 4"`;
+  const lines = items.slice(0, MAX_ITEMS).map((it, i) => `${i + 1}. ${tidy(it.question, 60)}`);
+  return `Decisions Remaining:\n${lines.join("\n")}\nreply by number, like "1: yes, jan 4"`;
 }
 
 /** "@huddle what's left?" and its usual phrasings: someone asking for the list on demand. */

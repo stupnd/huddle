@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Check, MessagesSquare, Pencil, X } from "lucide-react";
 import type { Member, WantCategory } from "@/lib/domain/types";
-import { activeAgents, wantConflicts } from "@/lib/domain/select";
+import { activeAgents, activeSpecialists, wantConflicts } from "@/lib/domain/select";
 import { agentEnter, listStagger } from "@/lib/design/tokens";
 import { api } from "@/lib/api";
 import { plural } from "@/lib/format";
@@ -51,6 +51,7 @@ export function CrewTab() {
   const { run, busy } = useAction();
   const conflicts = useMemo(() => wantConflicts(snapshot), [snapshot]);
   const agents = useMemo(() => activeAgents(snapshot), [snapshot]);
+  const specialists = useMemo(() => activeSpecialists(snapshot), [snapshot]);
   const conflictCategories = new Set(conflicts.map((c) => c.category));
 
   const threadFor = (category: string) => {
@@ -89,7 +90,7 @@ export function CrewTab() {
         {agents.length > 0 && (
           <Button size="sm" variant="quiet" onClick={openDrawer}>
             <MessagesSquare />
-            {plural(agents.length, "agent")} helping · open chat
+            {specialists.length ? `${plural(specialists.length, "specialist")} helping · open chat` : "open chat"}
           </Button>
         )}
       </header>
