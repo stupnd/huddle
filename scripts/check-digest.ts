@@ -5,7 +5,7 @@
  *   npx tsx scripts/check-digest.ts
  */
 import assert from "node:assert/strict";
-import { formatFor } from "../lib/agents/spokesperson";
+import { formatParts, splitMessage } from "../lib/agents/spokesperson";
 import {
   MAX_ITEMS, WHATS_LEFT, applyVerdicts, composeReply, isLive, mightAnswer, renderDigest, type DigestItem, type DigestState,
 } from "../lib/agents/digest-state";
@@ -31,7 +31,15 @@ assert.equal(
 const long = Array.from({ length: 9 }, (_, i) => ({ question: `${i + 1}. ${"a very long question about something ".repeat(6)}` }));
 const full = renderDigest(long);
 assert.equal(full.split("\n").filter((l) => /^\d\. /.test(l)).length, MAX_ITEMS);
-assert.equal(formatFor("huddle", full, []), full, "the digest must not be truncated by the spokesperson's length cap");
+assert.equal(formatParts("huddle", full, []).join("\n"), full, "the digest must not lose any text to the spokesperson's length cap");
+
+// a message over the cap is split into bubbles, never cut: every word comes through, in order, each within the caps
+const wall = Array.from({ length: 30 }, (_, i) => `line ${i + 1} has some words in it`).join("\n") + "\n" + "One long sentence. ".repeat(60);
+const parts = splitMessage(wall);
+assert.ok(parts.length > 1, "an over-long message becomes several bubbles");
+assert.ok(parts.every((p) => p.length <= 420 && p.split("\n").length <= 6), "each bubble fits the caps");
+assert.equal(parts.join(" ").replace(/\s+/g, " "), wall.replace(/\s+/g, " ").trim(), "nothing is dropped");
+assert.deepEqual(splitMessage("short and sweet"), ["short and sweet"]);
 
 // which messages are worth a model call
 assert.equal(mightAnswer(state(), "yes let's ski jan 4", { now }), true, "shares a word with an item");

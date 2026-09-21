@@ -18,30 +18,79 @@ function oneLine(content: string) {
   return content.replace(/[ \t]*\n\s*\n[\s]*/g, "\n").replace(/[ \t]{2,}/g, " ").trim();
 }
 
-// Prompts ask for short messages; this guarantees it. Cut only at a line boundary so nothing
-// ever looks chopped, and never cut a lone paragraph mid-sentence. Six lines is enough for a
-// timestamped day plan, and far more than a normal reply needs.
+// Prompts ask for short messages, and a chat bubble that is a wall of text is hard to read, so a
+// long message goes out as several bubbles instead of being cut. Nothing is ever dropped: each part
+// stays under both limits, split at a line boundary where possible, else a sentence, else a word.
+// Six lines is enough for a timestamped day plan, and far more than a normal reply needs.
 const MAX_LINES = 6;
 const MAX_CHARS = 420;
+const PART_GAP_MS = 1200; // feels like typing, keeps order
 
-function capLength(content: string) {
-  let lines = content.split("\n").slice(0, MAX_LINES);
-  while (lines.length > 1 && lines.join("\n").length > MAX_CHARS) lines.pop();
-  let out = lines.join("\n");
-  if (out.length > MAX_CHARS) {
-    const cut = Math.max(out.lastIndexOf(". ", MAX_CHARS), out.lastIndexOf("! ", MAX_CHARS), out.lastIndexOf("? ", MAX_CHARS));
-    if (cut > 40) out = out.slice(0, cut + 1);
+/** Breaks one over-long line at sentence ends, then at spaces, so every piece fits in a bubble. */
+function splitLine(line: string): string[] {
+  const out: string[] = [];
+  let rest = line;
+  while (rest.length > MAX_CHARS) {
+    const head = rest.slice(0, MAX_CHARS + 1);
+    const sentence = Math.max(head.lastIndexOf(". "), head.lastIndexOf("! "), head.lastIndexOf("? "));
+    const at = sentence > 40 ? sentence + 1 : head.lastIndexOf(" ") > 0 ? head.lastIndexOf(" ") : MAX_CHARS;
+    out.push(rest.slice(0, at).trim());
+    rest = rest.slice(at).trim();
   }
-  return out.trim();
+  if (rest) out.push(rest);
+  return out;
 }
 
-/** Formats an agent message. Huddle speaks from its own line, so it gets no prefix. */
-export function formatFor(speaker: string, content: string, agents: Agent[]) {
-  const text = capLength(oneLine(content));
-  if (speaker === HUDDLE.key) return text;
-  if (speaker === BUDGET.key) return `${prefix(BUDGET.emoji, BUDGET.name)}: ${text}`;
+/** Splits a message into bubbles that each fit the caps. A message that already fits is one part. */
+export function splitMessage(content: string): string[] {
+  const lines = oneLine(content).split("\n").flatMap(splitLine);
+  const parts: string[][] = [];
+  let cur: string[] = [];
+  for (const line of lines) {
+    const next = [...cur, line];
+    if (cur.length && (next.length > MAX_LINES || next.join("\n").length > MAX_CHARS)) {
+      parts.push(cur);
+      cur = [line];
+    } else cur = next;
+  }
+  if (cur.length) parts.push(cur);
+  return parts.map((p) => p.join("\n"));
+}
+
+/** Formats an agent message as the bubbles to send. Huddle speaks from its own line, so it gets no prefix. */
+export function formatParts(speaker: string, content: string, agents: Agent[]): string[] {
+  const parts = splitMessage(content);
+  if (speaker === HUDDLE.key) return parts;
+  if (speaker === BUDGET.key) return parts.map((t) => `${prefix(BUDGET.emoji, BUDGET.name)}: ${t}`);
   const a = agents.find((x) => x.id === speaker);
-  return a ? `${prefix(a.emoji, a.persona_name, a.role)}: ${text}` : text;
+  return a ? parts.map((t) => `${prefix(a.emoji, a.persona_name, a.role)}: ${t}`) : parts;
+}
+
+/**
+ * Sends a message as one or more bubbles and records each one in the dashboard exactly as sent.
+ * Stops at the first failed send and reports what is left, so a retry never repeats a bubble that arrived.
+ * Only the first bubble is threaded under replyToMessageId.
+ */
+async function deliver(trip: Trip, speaker: string, content: string, agents: Agent[], opts?: SendOptions) {
+  const s = db();
+  const adapter = adapterFor(trip.provider);
+  const raw = splitMessage(content);
+  const sendable = formatParts(speaker, content, agents);
+  const ids: (string | undefined)[] = [];
+  for (let i = 0; i < sendable.length; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, PART_GAP_MS));
+    let sent;
+    try {
+      sent = await adapter.sendToGroup(trip.provider_group_id, sendable[i], i === 0 ? opts : undefined);
+    } catch (error) {
+      return { ids, remaining: raw.slice(i), error };
+    }
+    ids.push(sent?.messageId);
+    await s.from("messages").insert({
+      trip_id: trip.id, sender_type: "agent", persona: speaker, content: raw[i], provider_message_id: sent?.messageId ?? null,
+    });
+  }
+  return { ids, remaining: [] as string[], error: undefined };
 }
 
 /**
@@ -55,13 +104,10 @@ export async function postNow(trip: Trip, speaker: string, content: string, opts
     console.warn(`[spokesperson] dropped an empty message from ${speaker}`);
     return undefined;
   }
-  const s = db();
-  const { data: agents } = await s.from("agents").select("*").eq("trip_id", trip.id);
-  const sent = await adapterFor(trip.provider).sendToGroup(trip.provider_group_id, formatFor(speaker, content, (agents ?? []) as Agent[]), opts);
-  await s.from("messages").insert({
-    trip_id: trip.id, sender_type: "agent", persona: speaker, content, provider_message_id: sent?.messageId ?? null,
-  });
-  return sent?.messageId;
+  const { data: agents } = await db().from("agents").select("*").eq("trip_id", trip.id);
+  const { ids, error } = await deliver(trip, speaker, content, (agents ?? []) as Agent[], opts);
+  if (error) throw error;
+  return ids[0];
 }
 
 /**
@@ -142,29 +188,22 @@ export async function tick(tripId: string, { force = false } = {}) {
   if (!claimed.length) return { posted: 0, reason: "another tick is already posting" };
 
   const { data: agents } = await s.from("agents").select("*").eq("trip_id", tripId);
-  const adapter = adapterFor(t.provider);
 
   let posted = 0;
   for (const c of claimed) {
-    const text = formatFor(c.speaker, c.content, (agents ?? []) as Agent[]);
-    let sentId: string | undefined;
-    try {
-      sentId = (await adapter.sendToGroup(t.provider_group_id, text))?.messageId;
-    } catch (err) {
-      // Put it back so the next tick retries instead of losing the message
-      await s.from("speak_candidates").update({ status: "pending" }).eq("id", c.id);
-      console.error("[spokesperson] send failed, candidate returned to pending", err);
+    const { ids, remaining, error } = await deliver(t, c.speaker, c.content, (agents ?? []) as Agent[]);
+    if (error) {
+      // Put back only what has not arrived, so the next tick retries instead of losing or repeating it
+      await s.from("speak_candidates").update({ status: "pending", content: remaining.join("\n") }).eq("id", c.id);
+      console.error("[spokesperson] send failed, candidate returned to pending", error);
       continue;
     }
-    await s.from("messages").insert({
-      trip_id: tripId, sender_type: "agent", persona: c.speaker, content: c.content, provider_message_id: sentId ?? null,
-    });
-    if (c.trigger === "digest") await markDigestPosted(tripId, sentId);
+    if (c.trigger === "digest") await markDigestPosted(tripId, ids[0]);
     await s.from("speak_candidates").update({
       status: "posted", posted_at: new Date().toISOString(), reason: force ? "forced" : `trigger: ${c.trigger}`,
     }).eq("id", c.id);
     posted++;
-    if (claimed.length > 1) await new Promise((r) => setTimeout(r, 1200)); // feels like typing, keeps order
+    if (claimed.length > 1) await new Promise((r) => setTimeout(r, PART_GAP_MS));
   }
   await s.from("trips").update({ last_agent_post_at: new Date().toISOString() }).eq("id", tripId);
   return { posted, reason: "posted" };
