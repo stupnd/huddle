@@ -559,7 +559,10 @@ function adaptStops(api: TripApi, decisions: Decision[], members: Member[], mess
     if (api.stopStatusReady && row.status && row.status !== "proposed") {
       status = row.status;
       if (row.status === "dropped" && row.dropped_at) {
-        dropped = { reason: row.dropped_reason ?? "removed", by: { kind: "agent", id: row.dropped_by ?? HUDDLE_ID }, at: row.dropped_at };
+        // dropped_by is a participant id when a person dropped it from the dashboard, an agent id otherwise
+        const byMember = row.dropped_by ? members.some((m) => m.id === row.dropped_by) : false;
+        const by = byMember ? { kind: "member" as const, id: row.dropped_by! } : { kind: "agent" as const, id: row.dropped_by ?? HUDDLE_ID };
+        dropped = { reason: row.dropped_reason ?? "removed", by, at: row.dropped_at };
       }
     } else {
       // a decided thread whose outcome names this stop locks it; a "skip X" outcome contests it

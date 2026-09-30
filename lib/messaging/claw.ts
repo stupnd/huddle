@@ -4,6 +4,11 @@ import type { InboundMessage, MessagingAdapter } from "./types";
  * Claw Messenger client (https://www.clawmessenger.com/docs).
  * Inbound messages arrive over a persistent WebSocket, so this runs inside the long-lived worker
  * (worker/claw-worker.ts), not inside Vercel functions. Sends go over the same socket.
+ *
+ * Serverless code (the sign-in route, dashboard actions that post right away) never calls connect().
+ * Its sends open a one-shot socket with a hard connect timeout, wait for the one send.result, and
+ * close, so a Claw outage costs a bounded few seconds instead of hanging the function until it is
+ * killed and leaving a reconnect loop behind.
  */
 
 const WS_URL = process.env.CLAW_WS_URL ?? "wss://claw-messenger.onrender.com/ws";
@@ -13,9 +18,26 @@ const MAX_BACKOFF_MS = 30_000;
 // key revoked, throttled) and fast retries only make it worse. Back off hard instead.
 const FAILURES_BEFORE_LONG_WAIT = 8;
 const LONG_WAIT_MS = 5 * 60_000;
+// How long a send waits for the socket to open before giving up
+const CONNECT_TIMEOUT_MS = 8_000;
+const SEND_RESULT_TIMEOUT_MS = 20_000;
+// One-shot sends run inside a function with a 30 to 60 s budget; keep connect + result well under it
+const ONE_SHOT_RESULT_TIMEOUT_MS = 15_000;
 
 type SendResult = { type: "send.result"; id: string; ok: boolean; chatId?: string; messageId?: string; error?: string; status?: string; errorCode?: string };
 type ClawEvent = { type: string; [k: string]: any };
+type SendPayload = { to?: string | string[]; chatId?: string; text: string; replyToMessageId?: string };
+
+function failed(id: string, error: string): SendResult {
+  return { type: "send.result", id, ok: false, error };
+}
+
+/** Resolves to `fallback` if `p` has not settled within `ms`. Never rejects on timeout. */
+function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
 
 class ClawClient {
   private ws: WebSocket | null = null;
@@ -27,12 +49,20 @@ class ClawClient {
   private handlers: ((e: ClawEvent) => void)[] = [];
   private ready: Promise<void> | null = null;
   private keepalive: ReturnType<typeof setInterval> | null = null;
+  /** true once the worker has asked for the long-lived socket; serverless callers never set it */
+  private persistent = false;
 
   onEvent(fn: (e: ClawEvent) => void) {
     this.handlers.push(fn);
   }
 
+  /** Opens (and keeps reopening) the long-lived socket. Only the worker calls this. */
   connect(): Promise<void> {
+    this.persistent = true;
+    return this.open();
+  }
+
+  private open(): Promise<void> {
     if (this.ready) return this.ready;
     this.ready = new Promise((resolve) => {
       const key = process.env.CLAW_API_KEY!;
@@ -76,7 +106,7 @@ class ClawClient {
           (stuck ? " (backing off hard: the handshake keeps failing, check the Claw dashboard)" : "")
         );
         this.ready = null;
-        setTimeout(() => this.connect(), wait);
+        setTimeout(() => this.open(), wait);
         // Claw drops connections with 1006 roughly every 17 minutes, and the first few retries
         // after a drop often fail too. A 30s ceiling left Huddle offline and silent while people
         // were mid-conversation, so cap it low: this is a chat product, not a rate-limited API.
@@ -86,7 +116,7 @@ class ClawClient {
     });
 
     // Keep the connection alive (the server closes sockets idle for 90s).
-    // onclose calls connect() again, so this has to be created once or every reconnect
+    // onclose calls open() again, so this has to be created once or every reconnect
     // leaves another ping timer running against the same socket.
     if (!this.keepalive) {
       this.keepalive = setInterval(() => {
@@ -98,8 +128,7 @@ class ClawClient {
     return this.ready;
   }
 
-  async send(payload: { to?: string | string[]; chatId?: string; text: string; replyToMessageId?: string }): Promise<SendResult> {
-    await this.connect();
+  async send(payload: SendPayload): Promise<SendResult> {
     const id = `huddle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const frame = {
       type: "send",
@@ -108,19 +137,60 @@ class ClawClient {
       parts: [{ type: "text", value: payload.text }],
       ...(payload.replyToMessageId ? { replyTo: { messageId: payload.replyToMessageId } } : {}),
     };
+    if (!this.persistent) return this.sendOnce(id, frame);
+
+    // The worker's socket may be mid-reconnect. Wait a bounded time for it, never forever:
+    // a send stuck here would block that trip's whole queue.
+    const opened = await within(this.open().then(() => true), CONNECT_TIMEOUT_MS, false);
+    if (!opened || this.ws?.readyState !== WebSocket.OPEN) return failed(id, `Claw is not connected (waited ${CONNECT_TIMEOUT_MS}ms)`);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        resolve({ type: "send.result", id, ok: false, error: "timed out waiting for send.result" });
-      }, 20_000);
+        resolve(failed(id, "timed out waiting for send.result"));
+      }, SEND_RESULT_TIMEOUT_MS);
       this.pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
       this.ws!.send(JSON.stringify(frame));
     });
   }
 
+  /** One socket, one send, then close. Every step is timed; nothing reconnects afterwards. */
+  private sendOnce(id: string, frame: object): Promise<SendResult> {
+    const key = process.env.CLAW_API_KEY;
+    if (!key) return Promise.resolve(failed(id, "CLAW_API_KEY is not set"));
+    return new Promise((resolve) => {
+      let settled = false;
+      let resultTimer: ReturnType<typeof setTimeout> | undefined;
+      const ws = new WebSocket(`${WS_URL}?key=${encodeURIComponent(key)}`);
+      const finish = (r: SendResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(connectTimer);
+        clearTimeout(resultTimer);
+        try { ws.close(); } catch { /* already closed */ }
+        resolve(r);
+      };
+      const connectTimer = setTimeout(() => finish(failed(id, `could not connect to Claw within ${CONNECT_TIMEOUT_MS}ms`)), CONNECT_TIMEOUT_MS);
+
+      ws.onopen = () => {
+        clearTimeout(connectTimer);
+        resultTimer = setTimeout(() => finish(failed(id, "timed out waiting for send.result")), ONE_SHOT_RESULT_TIMEOUT_MS);
+        ws.send(JSON.stringify(frame));
+      };
+      ws.onmessage = ({ data }) => {
+        let event: ClawEvent;
+        try { event = JSON.parse(String(data)); } catch { return; }
+        if (event.type === "ping") { ws.send(JSON.stringify({ type: "pong" })); return; }
+        if (event.type === "send.result" && event.id === id) finish(event as SendResult);
+      };
+      ws.onclose = (ev: CloseEvent) => finish(failed(id, `Claw closed the connection (code ${ev?.code ?? "?"}) before confirming the send`));
+      ws.onerror = () => { /* onclose follows; never log the URL, it has the key */ };
+    });
+  }
+
   async react(messageId: string, reactionType: "love" | "like" | "laugh" | "emphasize" | "question") {
-    await this.connect();
-    this.ws!.send(JSON.stringify({ type: "reaction", id: `r-${Date.now()}`, messageId, reactionType, remove: false }));
+    const opened = await within(this.open().then(() => true), CONNECT_TIMEOUT_MS, false);
+    if (!opened || this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ type: "reaction", id: `r-${Date.now()}`, messageId, reactionType, remove: false }));
   }
 
   /** Every friend's phone must be registered before Claw will route their messages to Huddle. */

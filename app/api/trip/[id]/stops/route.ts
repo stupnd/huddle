@@ -15,7 +15,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   const auth = await requireMember(id);
   if (auth instanceof Response) return auth;
-  const { stopId, status, reason, by, start_time, duration_min, move } = await req.json();
+  const { stopId, status, reason, start_time, duration_min, move } = await req.json();
   if (!stopId) return NextResponse.json({ error: "stopId is required" }, { status: 400 });
 
   // Timeline edits: a new start time, a new duration, or a nudge up/down within the day.
@@ -24,9 +24,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   if (!STATUSES.includes(status)) return NextResponse.json({ error: `status must be one of ${STATUSES.join(", ")}` }, { status: 400 });
 
+  // Who dropped it is the signed-in person, never a name or id the browser sends
+  let droppedBy: string | null = null;
+  if (status === "dropped") {
+    const { data: me } = await db().from("participants").select("id").eq("trip_id", id).eq("address", auth.phone).maybeSingle();
+    if (!me) return NextResponse.json({ error: "Only people in this trip can change it." }, { status: 403 });
+    droppedBy = me.id;
+  }
+
   const patch =
     status === "dropped"
-      ? { status, dropped_reason: String(reason ?? "removed from the dashboard").slice(0, 200), dropped_by: String(by ?? "huddle"), dropped_at: new Date().toISOString() }
+      ? { status, dropped_reason: String(reason ?? "removed from the dashboard").slice(0, 200), dropped_by: droppedBy, dropped_at: new Date().toISOString() }
       : { status, dropped_reason: null, dropped_by: null, dropped_at: null };
 
   const { error } = await db().from("itinerary_items").update(patch).eq("id", stopId).eq("trip_id", id);

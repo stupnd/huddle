@@ -53,7 +53,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (auth instanceof Response) return auth;
   const { agentId } = await req.json();
   if (!agentId) return NextResponse.json({ error: "agentId is required" }, { status: 400 });
-  await dismissAgent(id, agentId);
+  if (!(await dismissAgent(id, agentId))) return NextResponse.json({ error: "that agent is not on this trip" }, { status: 404 });
   await tick(id, { force: true });
   return NextResponse.json({ ok: true });
 }

@@ -20,6 +20,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const participantId = await participantFor(id, auth.phone);
   if (!participantId) return NextResponse.json({ error: "Only people in this trip can vote." }, { status: 403 });
 
+  // The decision must belong to this trip. Membership of trip A is not a licence to vote on trip B.
+  const { data: decision } = await db().from("decisions").select("id").eq("id", decisionId).eq("trip_id", id).maybeSingle();
+  if (!decision) return NextResponse.json({ error: "that decision is not on this trip" }, { status: 404 });
+
   const { error } = await db()
     .from("decision_votes")
     .upsert({ trip_id: id, decision_id: decisionId, participant_id: participantId, option_label: optionLabel, created_at: new Date().toISOString() }, { onConflict: "decision_id,participant_id" });
