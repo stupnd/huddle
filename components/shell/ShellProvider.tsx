@@ -46,8 +46,8 @@ type ShellState = {
 
 const ShellContext = createContext<ShellState | null>(null);
 
-export function ShellProvider({ initial, tripId, signedIn = false, children }: { initial: TripSnapshot; tripId: string; signedIn?: boolean; children: React.ReactNode }) {
-  const { snapshot: live, error: liveError, refresh } = useLiveTrip(tripId, initial);
+export function ShellProvider({ initial, tripId, signedIn = false, live: polling = true, children }: { initial: TripSnapshot; tripId: string; signedIn?: boolean; live?: boolean; children: React.ReactNode }) {
+  const { snapshot: live, error: liveError, refresh } = useLiveTrip(tripId, initial, polling);
   const [viewer, setViewer] = useLocalPref<string>(`viewer:${tripId}`, "");
   const snapshot = useMemo(
     // The server-resolved identity (from the sign-in cookie) always wins over the remembered pick

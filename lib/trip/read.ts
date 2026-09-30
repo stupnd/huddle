@@ -1,5 +1,6 @@
-import { db, type Preference } from "@/lib/supabase";
+import { db, type Message, type Participant, type Preference } from "@/lib/supabase";
 import { latestJob } from "@/lib/jobs";
+import { maskPhone } from "@/lib/phone";
 import type { TripApi } from "./api";
 
 /**
@@ -12,11 +13,28 @@ import type { TripApi } from "./api";
 
 export type ReadResult = { ok: true; data: TripApi } | { ok: false; status: number; error: string };
 
+/**
+ * Who is looking. A member sees real phone numbers; anyone else (a signed-out guest, a
+ * signed-in stranger) gets the public view with numbers masked. Either way, a message that
+ * a private preference was pulled from is hidden from everyone but the person who sent it,
+ * since blanking the preference value alone still leaves "my budget is $400" in the chat log.
+ */
+export type TripViewer = {
+  /** the signed-in phone number, or null for a guest */
+  phone: string | null;
+  /** dev simulator only: show everything even though nobody is signed in as these fake people */
+  trusted?: boolean;
+  /** dev simulator only: treat the trip as trusted when (and only when) it is a simulator trip */
+  trustSimulatorTrip?: boolean;
+};
+
+const HIDDEN_MESSAGE = "(private message hidden)";
+
 export function hasSupabase() {
   return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
-export async function readTrip(id: string): Promise<ReadResult> {
+export async function readTrip(id: string, viewer: TripViewer = { phone: null }): Promise<ReadResult> {
   if (!hasSupabase()) {
     return {
       ok: false,
@@ -51,7 +69,25 @@ export async function readTrip(id: string): Promise<ReadResult> {
   }
 
   // Private values stay on the server. The dashboard shows a locked chip from the visibility flag.
-  const safePreferences = ((preferences.data ?? []) as Preference[]).map((p) => (p.visibility === "private" ? { ...p, value: "" } : p));
+  const rawPreferences = (preferences.data ?? []) as Preference[];
+  const safePreferences = rawPreferences.map((p) => (p.visibility === "private" ? { ...p, value: "" } : p));
+
+  const allParticipants = (participants.data ?? []) as Participant[];
+  const me = viewer.phone ? allParticipants.find((p) => p.address === viewer.phone) : undefined;
+  const trusted = Boolean(viewer.trusted || (viewer.trustSimulatorTrip && trip.data.provider === "simulator"));
+  const publicView = !me && !trusted;
+
+  // The raw message a private preference came from says the same thing in plain words
+  const privateSources = new Set(
+    rawPreferences.filter((p) => p.visibility === "private" && p.source_message_id).map((p) => p.source_message_id as string)
+  );
+  const safeMessages = ((messages.data ?? []) as Message[]).map((m) =>
+    !trusted && privateSources.has(m.id) && (!me || m.participant_id !== me.id) ? { ...m, content: HIDDEN_MESSAGE } : m
+  );
+
+  const safeParticipants = allParticipants.map((p) =>
+    publicView ? { ...p, address: maskPhone(p.address) } : p
+  );
 
   const itineraryRows = itinerary.error ? [] : (itinerary.data ?? []);
   const stopStatusReady = !itinerary.error && itineraryRows.length > 0 ? "status" in itineraryRows[0] : false;
@@ -60,8 +96,8 @@ export async function readTrip(id: string): Promise<ReadResult> {
     ok: true,
     data: {
       trip: trip.data,
-      participants: participants.data ?? [],
-      messages: messages.data ?? [],
+      participants: safeParticipants,
+      messages: safeMessages,
       preferences: safePreferences,
       decisions: decisions.data ?? [],
       agents: agents.data ?? [],

@@ -34,7 +34,11 @@ export async function POST(req: Request) {
   const code_hash = createHash("sha256").update(`${phone}:${code}`).digest("hex");
   await s.from("login_codes").insert({ phone, code_hash, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() });
 
-  const r = await claw.send({ to: phone, text: `your huddle sign-in code is ${code.slice(0, 3)} ${code.slice(3)}. it expires in 10 minutes.` });
+  // This function never calls claw.connect(), so the send is a one-shot socket with a connect
+  // timeout and a result timeout, both well inside maxDuration. A Claw outage fails fast here.
+  const r = await claw
+    .send({ to: phone, text: `your huddle sign-in code is ${code.slice(0, 3)} ${code.slice(3)}. it expires in 10 minutes.` })
+    .catch((err: unknown) => ({ ok: false, error: err instanceof Error ? err.message : String(err), errorCode: undefined }));
   if (!r.ok) console.error("[auth] could not text code", r.error ?? r.errorCode);
   return ok;
 }

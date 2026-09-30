@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/supabase";
 import { tick } from "@/lib/agents/spokesperson";
+import { simulatorEnabled } from "@/lib/messaging/simulator";
 
 export const maxDuration = 60;
 
@@ -10,8 +11,11 @@ export const maxDuration = 60;
  */
 export async function POST(req: Request) {
   const url = new URL(req.url);
-  const isSim = (process.env.MESSAGING_PROVIDER ?? "simulator") === "simulator";
-  if (!isSim && req.headers.get("x-tick-secret") !== process.env.TICK_SECRET) {
+  const isSim = simulatorEnabled();
+  // An unset or empty TICK_SECRET never authorizes anything
+  const secret = process.env.TICK_SECRET;
+  const hasSecret = Boolean(secret) && req.headers.get("x-tick-secret") === secret;
+  if (!isSim && !hasSecret) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const force = url.searchParams.get("force") === "1" && isSim;

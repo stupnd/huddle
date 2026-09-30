@@ -79,14 +79,17 @@ export async function spawnSpecialist(ctx: TripContext, role: string, topic: str
 }
 
 /** Marks an agent as gone and queues its one-line sign-off. Used by the orchestrator and the dashboard. */
-export async function dismissAgent(tripId: string, agentId: string, sayGoodbye = true) {
+export async function dismissAgent(tripId: string, agentId: string, sayGoodbye = true): Promise<boolean> {
   const s = db();
-  await s.from("agents").update({ status: "left" }).eq("id", agentId);
+  // Scoped to the trip so a member of one trip cannot send home another trip's agents
+  const { data } = await s.from("agents").update({ status: "left" }).eq("id", agentId).eq("trip_id", tripId).select("id");
+  if (!data?.length) return false;
   if (sayGoodbye) {
     await s.from("speak_candidates").insert({
       trip_id: tripId, speaker: agentId, trigger: "signoff", urgency: 1, content: "that's sorted, i'm out 👋",
     });
   }
+  return true;
 }
 
 /** The plan, plus any agents it just spawned so the pipeline can run them. */

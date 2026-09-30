@@ -10,8 +10,9 @@ const POLL_MS = 4000;
  * Keeps a server-rendered snapshot fresh by polling GET /api/trip/[id].
  * The first paint uses the snapshot the layout loaded, so there is no client
  * loading state; later reads swap in silently. Polling pauses while the tab is hidden.
+ * The API is members only, so a guest looking at the public view keeps the first snapshot.
  */
-export function useLiveTrip(tripId: string, initial: TripSnapshot) {
+export function useLiveTrip(tripId: string, initial: TripSnapshot, enabled = true) {
   const [snapshot, setSnapshot] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -20,6 +21,7 @@ export function useLiveTrip(tripId: string, initial: TripSnapshot) {
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
 
     const load = async (force = false) => {
@@ -51,7 +53,7 @@ export function useLiveTrip(tripId: string, initial: TripSnapshot) {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [tripId, nonce]);
+  }, [tripId, nonce, enabled]);
 
   return { snapshot, error, refresh };
 }

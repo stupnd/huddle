@@ -10,3 +10,13 @@ export const simulatorAdapter: MessagingAdapter = {
     return {};
   },
 };
+
+/**
+ * The simulator runs the whole agent pipeline for anyone who can reach /api/sim/send or /api/tick,
+ * so it fails closed: never in a production build, and only when MESSAGING_PROVIDER is unset or
+ * "simulator". Every simulator-only door checks this one function.
+ */
+export function simulatorEnabled() {
+  if (process.env.NODE_ENV === "production") return false;
+  return (process.env.MESSAGING_PROVIDER ?? "simulator") === "simulator";
+}

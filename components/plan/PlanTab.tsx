@@ -82,7 +82,7 @@ export function PlanTab() {
   const conflicts = useMemo(() => conflictsForDay(snapshot, selected), [snapshot, selected]);
 
   const setStatus = (stop: Stop, status: Stop["status"], reason?: string) =>
-    run(`stop-${stop.id}`, () => api(`/api/trip/${tripId}/stops`, "PATCH", { stopId: stop.id, status, reason, by: "huddle" }), {
+    run(`stop-${stop.id}`, () => api(`/api/trip/${tripId}/stops`, "PATCH", { stopId: stop.id, status, reason }), {
       done: status === "dropped" ? `dropped ${stop.title}. it is in the removed strip if you change your mind.` : status === "locked" ? `${stop.title} is locked in.` : `${stop.title} is back on the plan.`,
     });
 
