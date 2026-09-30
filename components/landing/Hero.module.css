@@ -1,0 +1,49 @@
+/* The landing hero is deliberately single-theme: a dark inset card on a deep navy backdrop. */
+
+.backdrop {
+  background: radial-gradient(120% 80% at 20% 0%, #3a3f6e 0%, #23264a 35%, #121428 70%, #0b0c18 100%);
+}
+.card {
+  background: radial-gradient(90% 70% at 50% 0%, #1b1f38 0%, #0e1020 45%, #07080f 100%);
+  box-shadow: 0 40px 120px -40px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.06);
+}
+.stars { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .9; }
+
+/* The orb: a glass sphere lit from the top, cut by the card's bottom edge. Layers, back to front:
+   base gradient, two slow-moving liquid blobs, a specular highlight, and a bright rim along the top. */
+.orbWrap { position: absolute; left: 50%; bottom: -34vw; width: 72vw; max-width: 900px; aspect-ratio: 1; transform: translateX(-50%); pointer-events: none; }
+@media (max-width: 640px) { .orbWrap { width: 130vw; bottom: -70vw; } }
+.orb {
+  position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+  background:
+    radial-gradient(60% 55% at 38% 28%, rgba(200,236,255,.55) 0%, rgba(120,190,230,.25) 30%, rgba(40,90,140,.15) 55%, rgba(0,0,0,0) 75%),
+    radial-gradient(80% 80% at 50% 60%, #1c3a52 0%, #0f2236 40%, #08111c 75%, #05090f 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,.55),
+    inset 0 18px 60px rgba(160,220,255,.18),
+    inset 0 -80px 120px rgba(0,0,0,.6),
+    0 -6px 40px rgba(140,210,255,.22),
+    0 0 120px rgba(80,160,220,.12);
+}
+.blob { position: absolute; border-radius: 50%; filter: blur(28px); mix-blend-mode: screen; opacity: .8; }
+.blobA { width: 55%; height: 45%; left: 8%; top: 22%; background: radial-gradient(closest-side, rgba(150,230,255,.7), rgba(150,230,255,0)); animation: driftA 14s ease-in-out infinite alternate; }
+.blobB { width: 50%; height: 50%; right: 4%; top: 30%; background: radial-gradient(closest-side, rgba(255,255,255,.55), rgba(120,200,240,0)); animation: driftB 18s ease-in-out infinite alternate; }
+.blobC { width: 70%; height: 30%; left: 15%; bottom: 8%; background: radial-gradient(closest-side, rgba(60,140,190,.5), rgba(60,140,190,0)); animation: driftA 22s ease-in-out infinite alternate-reverse; }
+.gloss { position: absolute; left: 18%; top: 6%; width: 38%; height: 22%; border-radius: 50%; background: radial-gradient(closest-side, rgba(255,255,255,.75), rgba(255,255,255,0)); filter: blur(6px); }
+.rim { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(70% 20% at 50% 0%, rgba(210,240,255,.9) 0%, rgba(210,240,255,0) 70%); }
+@keyframes driftA { from { transform: translate(0,0) scale(1); } to { transform: translate(8%, 6%) scale(1.08); } }
+@keyframes driftB { from { transform: translate(0,0) scale(1); } to { transform: translate(-10%, 8%) scale(.94); } }
+
+/* Floating message cards: glass, slow bob, staggered */
+.float { animation: bob 7s ease-in-out infinite; }
+.floatSlow { animation: bob 9s ease-in-out infinite reverse; }
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+.glass {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 20px 60px -20px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.12);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.imsg { background: #1a8cff; color: #fff; box-shadow: 0 20px 60px -20px rgba(26,140,255,.6); }
+
+@media (prefers-reduced-motion: reduce) { .blobA, .blobB, .blobC, .float, .floatSlow { animation: none; } }
